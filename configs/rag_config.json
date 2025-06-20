@@ -1,0 +1,134 @@
+{
+    "system": {
+        "name": "ChipRAG",
+        "version": "1.0.0",
+        "log_level": "INFO"
+    },
+    "paths": {
+        "design_data": "data/designs/ispd_2015_contest_benchmark",
+        "knowledge_base": "data/knowledge_base",
+        "models": "models",
+        "output": "output",
+        "logs": "logs"
+    },
+    "retrieval": {
+        "similarity_threshold": 0.7,
+        "max_retrieved_items": 5,
+        "weights": {
+            "text": 0.4,
+            "image": 0.3,
+            "structure": 0.3
+        }
+    },
+    "evaluation": {
+        "metrics": ["timing", "power", "area", "congestion"],
+        "weights": {
+            "timing": 0.3,
+            "power": 0.3,
+            "area": 0.2,
+            "congestion": 0.2
+        },
+        "layout_quality": {
+            "wirelength_weight": 0.4,
+            "congestion_weight": 0.3,
+            "timing_weight": 0.3
+        },
+        "constraint_satisfaction": {
+            "max_violations": 5,
+            "violation_threshold": 0.1
+        }
+    },
+    "optimization": {
+        "max_iterations": 100,
+        "population_size": 50,
+        "mutation_rate": 0.1,
+        "crossover_rate": 0.8,
+        "elite_size": 5
+    },
+    "max_iterations": 10,
+    "convergence_threshold": 0.01,
+    "search_range": {
+        "timing_weight": 0.3,
+        "power_weight": 0.3,
+        "area_weight": 0.2,
+        "congestion_weight": 0.2
+    },
+    "objectives": {
+        "timing": {
+            "critical_path_weight": 0.6,
+            "slack_weight": 0.4
+        },
+        "power": {
+            "total_power_weight": 0.5,
+            "dynamic_power_weight": 0.5
+        },
+        "area": {
+            "total_area_weight": 0.5,
+            "cell_density_weight": 0.5
+        },
+        "congestion": {
+            "average_congestion_weight": 0.5,
+            "max_congestion_weight": 0.5
+        }
+    },
+    "knowledge_graph": {
+        "similarity_threshold": 0.7,
+        "max_retrieved_nodes": 10,
+        "text_encoder": "sentence-transformers/all-MiniLM-L6-v2",
+        "image_encoder": "resnet50"
+    },
+    "multi_granularity_retrieval": {
+        "system_level_weight": 0.3,
+        "function_level_weight": 0.3,
+        "submodule_level_weight": 0.2,
+        "cell_level_weight": 0.2
+    },
+    "knowledge_transfer": {
+        "similarity_threshold": 0.7,
+        "max_transferred_nodes": 5
+    },
+    "layout_quality": {
+        "timing_constraints": {
+            "max_delay": 1.0,
+            "min_slack": -0.1
+        },
+        "power_constraints": {
+            "max_power": 1.0,
+            "max_dynamic_power": 0.8
+        },
+        "area_constraints": {
+            "max_area": 1.0,
+            "max_density": 0.85
+        },
+        "congestion_constraints": {
+            "max_congestion": 0.8,
+            "max_allowed_congestion": 1.0
+        }
+    },
+    "llm": {
+        "model": "deepseek-coder",
+        "temperature": 0.7,
+        "max_tokens": 2048,
+        "top_p": 0.95,
+        "frequency_penalty": 0.0,
+        "presence_penalty": 0.0
+    },
+    "embedding": {
+        "model": "text-embedding-3-small",
+        "dimension": 1536,
+        "chunk_size": 1000,
+        "chunk_overlap": 200
+    },
+    "knowledge_base": {
+        "layout_experience": "data/knowledge_base/layout_experience",
+        "design_patterns": "data/knowledge_base/design_patterns",
+        "constraints": "data/knowledge_base/constraints",
+        "index_type": "faiss",
+        "similarity_metric": "cosine"
+    },
+    "logging": {
+        "level": "INFO",
+        "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        "file": "logs/rag_system.log"
+    }
+} 

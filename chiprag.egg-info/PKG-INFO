@@ -1,0 +1,97 @@
+Metadata-Version: 2.4
+Name: chiprag
+Version: 0.1.0
+Summary: ChipRAG - 芯片设计RAG系统
+Home-page: https://github.com/yourusername/chip-rag
+Author: Your Name
+Author-email: your.email@example.com
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: networkx
+Requires-Dist: matplotlib
+Requires-Dist: scikit-learn
+Requires-Dist: torch
+Requires-Dist: transformers
+Requires-Dist: spacy
+Requires-Dist: nltk
+Requires-Dist: gensim
+Requires-Dist: faiss-cpu
+Requires-Dist: sentence-transformers
+Requires-Dist: pytest
+Requires-Dist: pytest-cov
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
+# ChipRAG
+
+ChipRAG是一个基于RAG（检索增强生成）技术的芯片设计辅助系统。该系统利用大规模语言模型和知识图谱，为芯片设计提供智能化的布局优化建议。
+
+## 功能特点
+
+- 多粒度知识检索
+- 约束规则管理
+- 布局质量评估
+- 多目标优化
+- 知识图谱构建
+
+## 安装
+
+```bash
+pip install -e .
+```
+
+## 使用方法
+
+```python
+from chiprag.run_rag import RAGController
+
+# 初始化控制器
+controller = RAGController()
+
+# 运行RAG系统
+results = controller.run(design_spec)
+```
+
+## 项目结构
+
+```
+chiprag/
+├── modules/           # 核心功能模块
+│   ├── core/         # 核心功能
+│   ├── knowledge/    # 知识库相关
+│   ├── retrieval/    # 检索系统
+│   ├── evaluation/   # 评估系统
+│   └── utils/        # 工具函数
+├── data/             # 数据文件
+│   ├── test_cases/   # 测试用例
+│   ├── knowledge_base/ # 知识库
+│   └── benchmarks/   # 基准测试
+├── configs/          # 配置文件
+├── results/          # 实验结果
+├── reports/          # 实验报告
+├── tests/            # 测试文件
+└── examples/         # 示例代码
+```
+
+## 开发
+
+1. 克隆仓库
+2. 创建虚拟环境
+3. 安装依赖
+4. 运行测试
+
+## 许可证
+
+MIT License 

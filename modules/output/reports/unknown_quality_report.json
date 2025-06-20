@@ -1,0 +1,30 @@
+{
+  "scores": {
+    "timing": 0.0,
+    "power": 0.0,
+    "area": 0.0,
+    "congestion": 0.0
+  },
+  "total_score": 0.0,
+  "constraints": {
+    "timing": true,
+    "power": true,
+    "area": true,
+    "congestion": true
+  },
+  "weights": {
+    "timing": 0.3,
+    "power": 0.3,
+    "area": 0.2,
+    "congestion": 0.2
+  },
+  "timestamp": "2025-06-11T11:00:09.613073",
+  "design_name": "unknown",
+  "violations": {
+    "timing": [],
+    "power": [],
+    "area": [],
+    "congestion": []
+  },
+  "suggestions": []
+}

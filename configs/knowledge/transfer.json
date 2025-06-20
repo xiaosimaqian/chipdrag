@@ -1,0 +1,102 @@
+{
+    "name": "knowledge_transfer",
+    "version": "1.0.0",
+    "description": "知识迁移配置",
+    
+    "source": {
+        "type": "file",
+        "path": "data/knowledge/source",
+        "format": "json",
+        "encoding": "utf-8"
+    },
+    
+    "target": {
+        "type": "file",
+        "path": "data/knowledge/target",
+        "format": "json",
+        "encoding": "utf-8"
+    },
+    
+    "mapping": {
+        "components": {
+            "source_field": "component_id",
+            "target_field": "id",
+            "type": "direct"
+        },
+        "properties": {
+            "source_field": "properties",
+            "target_field": "attributes",
+            "type": "nested"
+        },
+        "relationships": {
+            "source_field": "connections",
+            "target_field": "edges",
+            "type": "transformed"
+        }
+    },
+    
+    "transformation": {
+        "rules": [
+            {
+                "name": "property_normalization",
+                "type": "function",
+                "function": "normalize_property",
+                "parameters": {
+                    "scale": 1.0,
+                    "unit": "um"
+                }
+            }
+        ]
+    },
+    
+    "validation": {
+        "rules": [
+            {
+                "name": "required_fields",
+                "fields": ["id", "type", "properties"],
+                "type": "presence"
+            },
+            {
+                "name": "property_types",
+                "fields": {
+                    "width": "number",
+                    "height": "number",
+                    "position": "object"
+                },
+                "type": "type_check"
+            },
+            {
+                "name": "relationship_validity",
+                "fields": ["source", "target", "type"],
+                "type": "presence"
+            }
+        ]
+    },
+    
+    "logging": {
+        "level": "INFO",
+        "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        "file": "logs/knowledge_transfer.log",
+        "max_size": 10485760,
+        "backup_count": 5
+    },
+    
+    "error_handling": {
+        "retry_attempts": 3,
+        "retry_delay": 1,
+        "skip_invalid": true,
+        "log_errors": true
+    },
+    
+    "performance": {
+        "batch_size": 100,
+        "num_workers": 4,
+        "timeout": 30,
+        "cache_size": 1000
+    },
+    
+    "transfer_rules": [
+        {"from": "system", "to": "module", "strategy": "copy"},
+        {"from": "module", "to": "component", "strategy": "copy"}
+    ]
+}

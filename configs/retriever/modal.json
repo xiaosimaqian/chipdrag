@@ -1,0 +1,41 @@
+{
+    "name": "modal_retriever",
+    "version": "1.0.0",
+    "description": "模态检索器配置",
+    
+    "text_encoder": {
+        "use_ollama": false,
+        "model_path": "models/bert",
+        "max_length": 512,
+        "batch_size": 32
+    },
+    "llm": {
+        "model_path": "models/models--gpt2",
+        "max_length": 1024,
+        "batch_size": 16
+    },
+    "image_encoder": {
+        "model_path": "models/resnet",
+        "batch_size": 32
+    },
+    "graph_encoder": {
+        "model_path": "models/graph",
+        "batch_size": 32
+    },
+    "fusion": {
+        "method": "weighted_sum",
+        "weights": {
+            "text": 0.4,
+            "image": 0.3,
+            "graph": 0.3
+        },
+        "normalize": true
+    },
+    "cache": {
+        "enabled": true,
+        "path": "cache/embeddings",
+        "max_size": 1000
+    },
+    "batch_size": 32,
+    "num_workers": 4
+}

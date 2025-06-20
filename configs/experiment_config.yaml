@@ -1,0 +1,342 @@
+# 实验配置
+name: "rag_layout_experiment"
+version: "1.0.0"
+description: "RAG-based layout generation experiment"
+
+experiment:
+  # 基础设置
+  name: "chip_layout_generation"
+  version: "1.0.0"
+  random_seed: 42
+  description: "RAG-based layout generation experiment"
+  
+  # 数据设置
+  data:
+    lef_file: "data/tech.lef"
+    def_file: "data/design.def"
+    output_dir: "results"
+    knowledge_base:
+      path: "data/knowledge_base"
+      format: "json"
+      hierarchy_config:
+        levels:
+          - name: "system"
+            threshold: 0.8
+          - name: "module"
+            threshold: 0.6
+          - name: "component"
+            threshold: 0.4
+      llm_config:
+        base_url: "http://localhost:11434"
+        model: "llama2"
+        temperature: 0.7
+        max_tokens: 1000
+    test_cases:
+      path: "data/test_cases"
+      format: "json"
+    results:
+      path: "data/results"
+      format: "json"
+    
+  # 检索设置
+  retrieval:
+    # 层次化多粒度检索
+    hierarchical:
+      enabled: true
+      levels:
+        - name: "macro"
+          threshold: 0.8
+        - name: "cell"
+          threshold: 0.6
+        - name: "pin"
+          threshold: 0.4
+    
+    # 多模态知识图谱
+    knowledge_graph:
+      enabled: true
+      node_types:
+        - "macro"
+        - "cell"
+        - "pin"
+        - "net"
+      edge_types:
+        - "connected_to"
+        - "belongs_to"
+        - "interacts_with"
+    
+    # 向量检索
+    vector:
+      model: "text-embedding-3-small"
+      dimension: 1536
+      top_k: 5
+      
+  # 生成设置
+  generation:
+    model: "gpt-4-turbo-preview"
+    temperature: 0.7
+    max_tokens: 2000
+    system_prompt: "你是一个专业的芯片布局专家，负责生成高质量的芯片布局方案。"
+    
+  # 评估设置
+  evaluation:
+    metrics:
+      wirelength:
+        threshold: 1.2  # 相对于基准的倍数
+        weight: 0.4
+      congestion:
+        threshold: 0.8  # 最大拥塞度
+        weight: 0.3
+      timing:
+        threshold: 0.9  # 时序裕量比例
+        weight: 0.3 
+  
+  # 模型设置
+  models:
+    layout:
+      model_name: "hierarchical_layout"  # 添加模型名称
+      generator: "default"
+      optimizer: "genetic"
+      parameters:
+        max_depth: 3
+        min_components: 2
+        similarity_threshold: 0.7
+    llm:
+      model_name: "llama2"
+      base_url: "http://localhost:11434"
+      temperature: 0.7
+      max_tokens: 1000
+    embedding:
+      model_name: "bert-base-uncased"
+      dimension: 768
+    name: "layout_model"  # 添加模型名称
+    type: "transformer"
+    hidden_size: 512
+    num_layers: 6
+    num_heads: 8
+    dropout: 0.1
+    learning_rate: 1e-4
+    weight_decay: 1e-5
+    max_epochs: 100
+    early_stopping_patience: 10
+    gradient_clip_val: 1.0
+    warmup_steps: 1000
+    scheduler: "cosine"
+    optimizer: "adamw"
+    loss_function: "cross_entropy"
+    metrics: ["accuracy", "f1", "precision", "recall"]
+    checkpoint_dir: "checkpoints/layout"
+    log_dir: "logs/layout"
+    tensorboard_dir: "runs/layout"
+    wandb_project: "chip-rag-layout"
+    wandb_entity: "your-username"
+    wandb_name: "layout-model"
+    wandb_tags: ["layout", "transformer", "chip-design"]
+    wandb_notes: "Layout generation model using transformer architecture"
+    wandb_config:
+      model_type: "transformer"
+      hidden_size: 512
+      num_layers: 6
+      num_heads: 8
+      dropout: 0.1
+      learning_rate: 1e-4
+      weight_decay: 1e-5
+      max_epochs: 100
+      early_stopping_patience: 10
+      gradient_clip_val: 1.0
+      warmup_steps: 1000
+      scheduler: "cosine"
+      optimizer: "adamw"
+      loss_function: "cross_entropy"
+      metrics: ["accuracy", "f1", "precision", "recall"]
+    data_config:
+      train_data: "data/train"
+      test_data: "data/test"
+      val_data: "data/val"
+      batch_size: 32
+      num_workers: 4
+    model_config:
+      type: "transformer"
+      hidden_size: 512
+      num_layers: 6
+      num_heads: 8
+      dropout: 0.1
+    training_config:
+      learning_rate: 1e-4
+      weight_decay: 1e-5
+      max_epochs: 100
+      early_stopping_patience: 10
+      gradient_clip_val: 1.0
+      warmup_steps: 1000
+      scheduler: "cosine"
+      optimizer: "adamw"
+      loss_function: "cross_entropy"
+      metrics: ["accuracy", "f1", "precision", "recall"]
+    logging_config:
+      checkpoint_dir: "checkpoints/layout"
+      log_dir: "logs/layout"
+      tensorboard_dir: "runs/layout"
+      wandb_project: "chip-rag-layout"
+      wandb_entity: "your-username"
+      wandb_name: "layout-model"
+      wandb_tags: ["layout", "transformer", "chip-design"]
+      wandb_notes: "Layout generation model using transformer architecture"
+      wandb_config:
+        model_type: "transformer"
+        hidden_size: 512
+        num_layers: 6
+        num_heads: 8
+        dropout: 0.1
+        learning_rate: 1e-4
+        weight_decay: 1e-5
+        max_epochs: 100
+        early_stopping_patience: 10
+        gradient_clip_val: 1.0
+        warmup_steps: 1000
+        scheduler: "cosine"
+        optimizer: "adamw"
+        loss_function: "cross_entropy"
+        metrics: ["accuracy", "f1", "precision", "recall"]
+
+environment:
+  cache_dir: "cache"
+  log_dir: "logs"
+  output_dir: "results"
+  temp_dir: "temp"
+
+data:
+  train_data: "data/train"
+  test_data: "data/test"
+  val_data: "data/val"
+  batch_size: 32
+  num_workers: 4
+
+retrieval:
+  type: "hierarchical"
+  top_k: 5
+  similarity_threshold: 0.7
+  rerank_threshold: 0.8
+  cache_size: 1000
+  cache_ttl: 3600
+  batch_size: 32
+  num_workers: 4
+  timeout: 30
+  retry_attempts: 3
+  retry_delay: 1
+  metrics:
+    - "recall"
+    - "precision"
+    - "ndcg"
+    - "mrr"
+  logging:
+    level: "INFO"
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    file: "logs/retrieval.log"
+    max_size: 10485760
+    backup_count: 5
+  monitoring:
+    enabled: true
+    interval: 60
+    metrics:
+      - "latency"
+      - "throughput"
+      - "cache_hits"
+      - "cache_misses"
+    alerts:
+      - type: "latency"
+        threshold: 1000
+        action: "alert"
+      - type: "error_rate"
+        threshold: 0.01
+        action: "alert"
+  hierarchy_config:
+    levels:
+      - name: "system"
+        threshold: 0.8
+      - name: "module"
+        threshold: 0.6
+      - name: "component"
+        threshold: 0.4
+    decomposition_strategy: "hybrid"
+    metrics:
+      - "coherence"
+      - "completeness"
+      - "consistency"
+    llm_config:
+      base_url: "http://localhost:11434"
+      model: "llama2"
+      temperature: 0.7
+      max_tokens: 1000
+
+generation:
+  type: "transformer"
+  max_length: 512
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 40
+  repetition_penalty: 1.1
+  num_beams: 4
+  length_penalty: 1.0
+  no_repeat_ngram_size: 3
+  early_stopping: true
+  batch_size: 32
+  num_workers: 4
+  timeout: 30
+  retry_attempts: 3
+  retry_delay: 1
+  metrics:
+    - "bleu"
+    - "rouge"
+    - "meteor"
+    - "bertscore"
+  logging:
+    level: "INFO"
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    file: "logs/generation.log"
+    max_size: 10485760
+    backup_count: 5
+  monitoring:
+    enabled: true
+    interval: 60
+    metrics:
+      - "latency"
+      - "throughput"
+      - "quality"
+    alerts:
+      - type: "latency"
+        threshold: 1000
+        action: "alert"
+      - type: "quality"
+        threshold: 0.8
+        action: "alert"
+
+evaluation:
+  metrics:
+    - name: "layout_quality"
+      weight: 0.4
+      threshold: 0.8
+    - name: "constraint_satisfaction"
+      weight: 0.3
+      threshold: 0.9
+    - name: "performance"
+      weight: 0.3
+      threshold: 0.85
+  logging:
+    level: "INFO"
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    file: "logs/evaluation.log"
+    max_size: 10485760
+    backup_count: 5
+  monitoring:
+    enabled: true
+    interval: 60
+    metrics:
+      - "quality"
+      - "constraints"
+      - "performance"
+    alerts:
+      - type: "quality"
+        threshold: 0.8
+        action: "alert"
+      - type: "constraints"
+        threshold: 0.9
+        action: "alert" 

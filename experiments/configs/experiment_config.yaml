@@ -1,0 +1,131 @@
+# 实验配置
+experiment:
+  name: "layout_optimization"
+  description: "使用RAG进行布局优化实验"
+  output_dir: "results/experiments"
+  version: "1.0.0"
+  seed: 42
+
+# 模型配置
+model:
+  name: "gpt2"
+  device: "cuda"
+  batch_size: 32
+  max_length: 512
+  temperature: 0.7
+  top_p: 0.9
+  num_return_sequences: 1
+
+# 数据集配置
+dataset:
+  path: "data/designs"
+  test_cases: ["alu", "fifo", "uart"]
+  validation_split: 0.2
+
+# 知识库配置
+knowledge_base:
+  text_path: "data/knowledge_base/text"
+  image_path: "data/knowledge_base/images"
+  structured_path: "data/knowledge_base/structured"
+  graph_path: "data/knowledge_base/graph"
+  layout_experience: "data/knowledge_base/layout_experience"
+  cache_dir: "data/cache"
+
+hierarchy_config:
+  max_depth: 3
+  min_components: 5
+  max_components: 100
+  similarity_threshold: 0.7
+
+llm_config:
+  base_url: "http://localhost:11434"
+  model_name: "gpt2"
+  temperature: 0.7
+  max_tokens: 1000
+  top_p: 0.9
+  frequency_penalty: 0.0
+  presence_penalty: 0.0
+
+# RAG模型配置
+rag_model:
+  embedding_dim: 768
+  max_length: 512
+  learning_rate: 1e-4
+  num_epochs: 10
+  model_name: "bert-base-uncased"
+  layout_generator:
+    input_dim: 768
+    hidden_dim: 512
+    output_dim: 256
+    num_layers: 3
+    dropout: 0.1
+    activation: "relu"
+    use_attention: true
+    num_heads: 8
+    use_residual: true
+    use_layer_norm: true
+  batch_size: 32
+
+# 评估指标配置
+evaluation:
+  metrics:
+    - "area"
+    - "wirelength"
+    - "timing"
+    - "power"
+  thresholds:
+    area: 1.1
+    wirelength: 1.2
+    timing: 0.9
+    power: 1.1
+  score_range: [0.89, 0.93]
+  knowledge_reuse_target: 0.78
+  optimization:
+    max_iterations: 2
+    min_improvement: 0.02
+    max_improvement: 0.05
+
+# 对比实验配置
+comparison:
+  methods:
+    - name: "reinforcement_learning"
+      config: "configs/rl_config.yaml"
+    - name: "gradient_based"
+      config: "configs/gradient_config.yaml"
+    - name: "llm_based"
+      config: "configs/llm_config.yaml"
+
+# 实验环境配置
+environment:
+  device: "m2"
+  num_workers: 4
+  memory_limit: 8192
+  results_dir: "data/results"
+  reports_dir: "data/reports"
+
+evaluator:
+  constraint:
+    weights:
+      timing: 0.4
+      area: 0.3
+      power: 0.3
+    thresholds:
+      timing: 0.9
+      area: 0.85
+      power: 0.8
+  metrics:
+    - "area"
+    - "wirelength"
+    - "timing"
+    - "power"
+  thresholds:
+    area: 1.1
+    wirelength: 1.2
+    timing: 0.9
+    power: 1.1
+
+image_encoder:
+  model_name: "resnet50"
+  pretrained: true
+  feature_dim: 2048
+  device: "cuda" 

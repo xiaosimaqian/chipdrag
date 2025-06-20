@@ -1,0 +1,47 @@
+# 文本编码器配置
+text_encoder:
+  model_name: "bert-base-chinese"
+  max_length: 512
+  model_path: "models/text_encoders/bert-base-chinese"
+  cache_dir: "models/text_encoders/cache"
+
+# 图像编码器配置
+image_encoder:
+  model_name: "resnet50"
+  pretrained: true
+  model_path: "models/image_encoders/resnet50"
+  cache_dir: "models/image_encoders/cache"
+  image_size: 224
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+
+# 知识图谱编码器配置
+knowledge_graph:
+  num_entities: 1000  # 根据实际知识图谱大小调整
+  num_relations: 50   # 根据实际关系类型数量调整
+  embedding_dim: 100
+  model_path: "models/knowledge_graph/kg_encoder"
+  cache_dir: "models/knowledge_graph/cache"
+  similarity_threshold: 0.7
+  top_k: 5
+
+# 模型训练配置
+training:
+  batch_size: 32
+  learning_rate: 0.001
+  num_epochs: 100
+  device: "cuda"  # 或 "cpu"
+  save_interval: 10
+  eval_interval: 5
+  early_stopping_patience: 10
+
+# 模型评估配置
+evaluation:
+  metrics:
+    - "accuracy"
+    - "precision"
+    - "recall"
+    - "f1_score"
+  test_split: 0.2
+  val_split: 0.1
+  random_seed: 42 

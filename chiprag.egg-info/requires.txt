@@ -1,0 +1,14 @@
+numpy
+pandas
+networkx
+matplotlib
+scikit-learn
+torch
+transformers
+spacy
+nltk
+gensim
+faiss-cpu
+sentence-transformers
+pytest
+pytest-cov

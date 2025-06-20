@@ -1,0 +1,104 @@
+{
+  "dynamic_rag": {
+    "enabled": true,
+    "version": "1.0",
+    "description": "动态RAG配置，结合DynamicRAG和DRAG论文的创新点",
+    
+    "retriever": {
+      "dynamic_k_range": [3, 15],
+      "quality_threshold": 0.7,
+      "learning_rate": 0.01,
+      "compressed_entity_dim": 128,
+      "entity_compression_ratio": 0.1,
+      "entity_similarity_threshold": 0.8
+    },
+    
+    "generator": {
+      "adaptation_rate": 0.1,
+      "quality_threshold": 0.8,
+      "max_iterations": 10,
+      "batch_size": 1000,
+      "memory_limit": "4GB"
+    },
+    
+    "evaluation": {
+      "weights": {
+        "wirelength": 0.25,
+        "congestion": 0.25,
+        "timing": 0.3,
+        "power": 0.2
+      },
+      "thresholds": {
+        "wirelength": 0.7,
+        "congestion": 0.7,
+        "timing": 0.7,
+        "power": 0.7
+      }
+    },
+    
+    "reinforcement_learning": {
+      "agent_type": "q_learning",
+      "epsilon": 0.1,
+      "alpha": 0.01,
+      "gamma": 0.9,
+      "max_states": 10000,
+      "update_frequency": 10
+    },
+    
+    "entity_enhancement": {
+      "enabled": true,
+      "compression_method": "average_pooling",
+      "embedding_dim": 128,
+      "similarity_metric": "cosine",
+      "cache_size": 1000
+    },
+    
+    "feedback_loop": {
+      "enabled": true,
+      "feedback_window": 100,
+      "quality_decay": 0.95,
+      "update_strategy": "exponential_moving_average"
+    },
+    
+    "optimization": {
+      "strategy": "iterative",
+      "convergence_threshold": 0.01,
+      "max_optimization_steps": 50,
+      "early_stopping": true,
+      "patience": 5
+    },
+    
+    "monitoring": {
+      "enable_logging": true,
+      "log_level": "INFO",
+      "metrics_tracking": true,
+      "performance_monitoring": true,
+      "save_statistics": true
+    }
+  },
+  
+  "llm": {
+    "model_name": "deepseek-chat",
+    "temperature": 0.7,
+    "max_tokens": 2000,
+    "top_p": 0.9,
+    "frequency_penalty": 0.0,
+    "presence_penalty": 0.0
+  },
+  
+  "knowledge_base": {
+    "path": "data/knowledge_base",
+    "format": "pkl",
+    "layout_experience": "data/knowledge_base",
+    "embedding_model": "bert-base-chinese",
+    "similarity_threshold": 0.7,
+    "max_results": 20
+  },
+  
+  "embedding_config": {
+    "model_name": "bert-base-chinese",
+    "max_length": 512,
+    "batch_size": 32,
+    "device": "auto"
+  }
+} 

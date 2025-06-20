@@ -1,0 +1,74 @@
+{
+    "basic": {
+        "text": "Design a high-performance ALU",
+        "type": "layout_design"
+    },
+    "multimodal": {
+        "text": "ALU layout with area optimization",
+        "image": "numpy_array",
+        "graph": {
+            "nodes": ["ALU", "Area", "Performance"],
+            "edges": [
+                ["ALU", "Area", "constraint"],
+                ["ALU", "Performance", "optimize"]
+            ]
+        }
+    },
+    "granularity": {
+        "text": "System-level ALU design",
+        "level": "system"
+    },
+    "hybrid": {
+        "text": "Optimize ALU layout for area and performance",
+        "image": "numpy_array",
+        "graph": {
+            "nodes": ["ALU", "Area", "Performance"],
+            "edges": [
+                ["ALU", "Area", "constraint"],
+                ["ALU", "Performance", "optimize"]
+            ]
+        },
+        "level": "module"
+    },
+    "ranking": {
+        "text": "Find similar ALU designs",
+        "type": "layout_design"
+    },
+    "explanation": {
+        "text": "Explain ALU layout optimization",
+        "type": "layout_design"
+    },
+    "suggestion": {
+        "text": "Suggest ALU layout improvements",
+        "type": "layout_design"
+    },
+    "confidence": {
+        "text": "Evaluate ALU layout confidence",
+        "type": "layout_design"
+    },
+    "performance": {
+        "text": "Test retrieval performance",
+        "type": "layout_design"
+    },
+    "name": "test_queries",
+    "version": "1.0.0",
+    "description": "测试查询数据",
+    
+    "queries": [
+        {
+            "id": "query_001",
+            "type": "layout",
+            "description": "生成ALU模块的布局",
+            "constraints": {
+                "area": {"max": 10000},
+                "timing": {"max_delay": 0.5},
+                "power": {"max": 1.0}
+            },
+            "context": {
+                "design": "ALU",
+                "technology": "28nm",
+                "optimization": "performance"
+            }
+        }
+    ]
+}

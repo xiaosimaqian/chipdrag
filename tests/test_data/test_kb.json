@@ -1,0 +1,130 @@
+{
+    "name": "test_knowledge_base",
+    "version": "1.0.0",
+    "description": "测试知识库数据",
+    "layouts": [
+        {
+            "id": "alu_001",
+            "type": "layout_design",
+            "content": "ALU layout design with area optimization",
+            "features": {
+                "text": "High-performance ALU layout with area constraints",
+                "image": {
+                    "path": "path/to/alu_001.png",
+                    "features": [0.1, 0.2, 0.3]
+                },
+                "graph": {
+                    "nodes": ["ALU", "Area", "Performance"],
+                    "edges": [
+                        ["ALU", "Area", "constraint"],
+                        ["ALU", "Performance", "optimize"]
+                    ]
+                }
+            },
+            "metadata": {
+                "level": "module",
+                "source": "pdf",
+                "timestamp": "2024-03-20T10:00:00Z"
+            }
+        }
+    ],
+    "components": [
+        {
+            "id": "comp_001",
+            "type": "module",
+            "name": "ALU",
+            "properties": {
+                "width": 100,
+                "height": 100,
+                "area": 10000
+            },
+            "connections": [
+                {
+                    "source": "comp_001",
+                    "target": "comp_002",
+                    "type": "data"
+                }
+            ]
+        },
+        {
+            "id": "comp_002",
+            "type": "module",
+            "name": "Register",
+            "properties": {
+                "width": 50,
+                "height": 50,
+                "area": 2500
+            },
+            "connections": [
+                {
+                    "source": "comp_002",
+                    "target": "comp_001",
+                    "type": "data"
+                }
+            ]
+        }
+    ],
+    "patterns": [
+        {
+            "id": "pattern_001",
+            "name": "ALU_Standard",
+            "description": "标准ALU布局模式",
+            "components": ["comp_001", "comp_002"],
+            "constraints": {
+                "timing": {"max_delay": 0.5},
+                "power": {"max_power": 1.0}
+            }
+        },
+        {
+            "id": "pattern_002",
+            "name": "Register_Standard",
+            "description": "标准寄存器布局模式",
+            "components": ["comp_002"],
+            "constraints": {
+                "timing": {"max_delay": 0.3},
+                "power": {"max_power": 0.5}
+            }
+        }
+    ],
+    "constraints": [
+        {
+            "id": "const_001",
+            "type": "timing",
+            "description": "关键路径延迟约束",
+            "parameters": {
+                "max_delay": 0.5,
+                "min_delay": 0.1
+            }
+        },
+        {
+            "id": "const_002",
+            "type": "power",
+            "description": "功耗约束",
+            "parameters": {
+                "max_power": 1.0,
+                "min_power": 0.1
+            }
+        }
+    ],
+    "experiences": [
+        {
+            "id": "exp_001",
+            "name": "ALU_Optimization",
+            "description": "ALU模块优化经验",
+            "components": ["comp_001"],
+            "optimization": {
+                "method": "genetic_algorithm",
+                "parameters": {
+                    "population_size": 100,
+                    "generations": 50,
+                    "mutation_rate": 0.1
+                },
+                "results": {
+                    "area": 9000,
+                    "timing": 0.4,
+                    "power": 0.8
+                }
+            }
+        }
+    ]
+}

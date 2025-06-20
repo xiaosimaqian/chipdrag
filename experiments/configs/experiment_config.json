@@ -1,0 +1,52 @@
+{
+    "experiment": {
+        "output_dir": "output",
+        "benchmark_dir": "data/benchmarks",
+        "benchmarks": [
+            "mgc_fft_2",
+            "mgc_matrix_mult_2",
+            "mgc_conv_2"
+        ],
+        "ablation_study": true
+    },
+    "knowledge_base": {
+        "layout_experience": "output/knowledge_base/layout_experience",
+        "similarity_threshold": 0.5,
+        "top_k": 5,
+        "feature_weights": {
+            "global": 0.4,
+            "module": 0.3,
+            "connection": 0.2,
+            "constraint": 0.1
+        }
+    },
+    "llm": {
+        "model_name": "deepseek-coder",
+        "api_base": "http://localhost:11434",
+        "temperature": 0.7,
+        "max_tokens": 2000,
+        "top_p": 0.9
+    },
+    "embedding": {
+        "model_name": "bge-m3:latest",
+        "api_base": "http://localhost:11434",
+        "dimension": 1024,
+        "batch_size": 32
+    },
+    "layout": {
+        "grid_size": 100,
+        "min_spacing": 2,
+        "max_iterations": 1000,
+        "temperature": 0.8
+    },
+    "evaluation": {
+        "wirelength_weight": 0.4,
+        "congestion_weight": 0.3,
+        "timing_weight": 0.3
+    },
+    "ablation_study": {
+        "no_hierarchy": true,
+        "no_knowledge": true,
+        "no_evaluation": true
+    }
+} 
