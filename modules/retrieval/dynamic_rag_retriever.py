@@ -78,7 +78,7 @@ class DynamicRAGRetriever:
             self.knowledge_base = KnowledgeBase(kb_config)
             
             # 初始化评估器
-            self.evaluator = MultiObjectiveEvaluator()
+            self.evaluator = MultiObjectiveEvaluator(self.config)
             
             # 动态重排序参数
             self.dynamic_k_range = self.config.get('dynamic_k_range', (3, 15))

@@ -1,0 +1,201 @@
+\documentclass{ctexart}
+\usepackage{amsmath}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{amsthm}
+
+\newtheorem{definition}{定义}
+\newtheorem{theorem}{定理}
+
+\title{Dynamic RAG: 形式化定义与技术框架}
+\author{You}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Dynamic RAG的形式化定义}
+
+\subsection{基本概念}
+
+\begin{definition}[Dynamic RAG]
+Dynamic RAG（动态检索增强生成）是一种基于强化学习的自适应检索增强生成框架，它通过动态调整检索策略和利用质量反馈来优化生成过程。形式上，Dynamic RAG可以定义为：
+
+$$\text{DynamicRAG} = (\mathcal{Q}, \mathcal{K}, \mathcal{R}, \mathcal{G}, \mathcal{F}, \mathcal{A})$$
+
+其中：
+\begin{itemize}
+    \item $\mathcal{Q}$：查询空间，包含用户查询和上下文信息
+    \item $\mathcal{K}$：知识库，存储外部知识资源
+    \item $\mathcal{R}$：动态检索器，基于强化学习策略进行检索
+    \item $\mathcal{G}$：生成器，基于检索结果生成响应
+    \item $\mathcal{F}$：质量评估器，评估生成结果的质量
+    \item $\mathcal{A}$：强化学习智能体，优化检索策略
+\end{itemize}
+\end{definition}
+
+\subsection{核心特征}
+
+\begin{definition}[动态重排序]
+动态重排序是Dynamic RAG的核心机制，它根据查询特征和生成质量动态调整检索文档的数量和顺序。形式化表示为：
+
+$$\mathcal{R}_{\text{dynamic}}: \mathcal{Q} \times \mathcal{H} \rightarrow \mathcal{D}^k$$
+
+其中：
+\begin{itemize}
+    \item $\mathcal{Q}$：查询空间
+    \item $\mathcal{H}$：历史交互记录
+    \item $\mathcal{D}^k$：k个检索文档的集合
+    \item $k$：动态确定的文档数量，$k \in [k_{min}, k_{max}]$
+\end{itemize}
+\end{definition}
+
+\begin{definition}[质量反馈机制]
+质量反馈机制建立了从生成质量到检索策略的闭环优化，定义为：
+
+$$\mathcal{F}_{\text{feedback}}: \mathcal{G}_{\text{output}} \rightarrow \mathcal{R}_{\text{reward}}$$
+
+其中：
+\begin{itemize}
+    \item $\mathcal{G}_{\text{output}}$：生成器的输出
+    \item $\mathcal{R}_{\text{reward}}$：强化学习奖励信号
+\end{itemize}
+\end{definition}
+
+\subsection{马尔可夫决策过程建模}
+
+Dynamic RAG将检索过程建模为马尔可夫决策过程 $(\mathcal{S}, \mathcal{A}, \mathcal{P}, \mathcal{R}, \gamma)$：
+
+\begin{definition}[状态空间 $\mathcal{S}$]
+状态空间包含查询特征、设计信息特征和检索历史特征：
+
+$$\mathcal{S} = \mathcal{S}_q \times \mathcal{S}_d \times \mathcal{S}_h$$
+
+其中：
+\begin{itemize}
+    \item $\mathcal{S}_q$：查询特征空间，包含查询复杂度、语义特征等
+    \item $\mathcal{S}_d$：设计信息特征空间，包含设计规模、约束类型等
+    \item $\mathcal{S}_h$：检索历史特征空间，包含历史检索效果、质量反馈等
+\end{itemize}
+\end{definition}
+
+\begin{definition}[动作空间 $\mathcal{A}$]
+动作空间定义为k值的动态范围：
+
+$$\mathcal{A} = \{k_{min}, k_{min}+1, \ldots, k_{max}\}$$
+
+其中$k_{min}$和$k_{max}$分别为最小和最大检索文档数量。
+\end{definition}
+
+\begin{definition}[奖励函数 $\mathcal{R}$]
+奖励函数基于生成质量的多目标评估：
+
+$$\mathcal{R}(s, a) = \sum_{i=1}^{n} \alpha_i \cdot f_i(\text{quality}(s, a))$$
+
+其中：
+\begin{itemize}
+    \item $f_i$：第$i$个质量指标函数
+    \item $\alpha_i$：对应的权重系数
+    \item $\text{quality}(s, a)$：在状态$s$下执行动作$a$后的生成质量
+\end{itemize}
+\end{definition}
+
+\section{技术框架}
+
+\subsection{强化学习智能体}
+
+\begin{definition}[Q-learning智能体]
+Dynamic RAG使用Q-learning智能体来学习最优检索策略：
+
+$$Q(s, a) \leftarrow Q(s, a) + \alpha[r + \gamma \max_{a'} Q(s', a') - Q(s, a)]$$
+
+其中：
+\begin{itemize}
+    \item $Q(s, a)$：状态-动作价值函数
+    \item $\alpha$：学习率
+    \item $\gamma$：折扣因子
+    \item $r$：即时奖励
+    \item $s'$：下一状态
+\end{itemize}
+\end{definition}
+
+\subsection{实体增强技术}
+
+\begin{definition}[实体压缩]
+实体压缩技术将高维实体信息压缩为低维表示：
+
+$$\mathcal{E}_{\text{compressed}} = \text{Encoder}(\mathcal{E}_{\text{original}})$$
+
+其中：
+\begin{itemize}
+    \item $\mathcal{E}_{\text{original}}$：原始实体嵌入
+    \item $\mathcal{E}_{\text{compressed}}$：压缩后的实体嵌入
+    \item $\text{Encoder}$：自编码器编码函数
+\end{itemize}
+\end{definition}
+
+\begin{definition}[实体注入]
+压缩后的实体信息通过注意力机制注入生成过程：
+
+$$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V$$
+
+其中查询$Q$包含压缩后的实体信息。
+\end{definition}
+
+\section{算法描述}
+
+\begin{algorithm}
+\caption{Dynamic RAG检索算法}
+\begin{algorithmic}[1]
+\STATE \textbf{输入}: 查询$q$, 知识库$\mathcal{K}$, 历史记录$\mathcal{H}$
+\STATE \textbf{输出}: 检索结果$\mathcal{D}^k$
+\STATE 构建状态$s = (s_q, s_d, s_h)$
+\STATE \textbf{if} $\text{random()} < \epsilon$ \textbf{then}
+\STATE \quad $k \leftarrow \text{random}(k_{min}, k_{max})$ \quad \textcolor{gray}{// 探索}
+\STATE \textbf{else}
+\STATE \quad $k \leftarrow \arg\max_{a} Q(s, a)$ \quad \textcolor{gray}{// 利用}
+\STATE \textbf{endif}
+\STATE 执行检索$\mathcal{D}^k = \text{retrieve}(q, \mathcal{K}, k)$
+\STATE 生成响应$y = \text{generate}(q, \mathcal{D}^k)$
+\STATE 评估质量$r = \text{evaluate}(y)$
+\STATE 更新Q值$Q(s, k) \leftarrow Q(s, k) + \alpha[r - Q(s, k)]$
+\STATE \textbf{return} $\mathcal{D}^k$
+\end{algorithmic}
+\end{algorithm}
+
+\section{与传统RAG的区别}
+
+\begin{definition}[传统RAG]
+传统RAG使用固定的检索策略：
+
+$$\text{TraditionalRAG} = (\mathcal{Q}, \mathcal{K}, \mathcal{R}_{\text{static}}, \mathcal{G})$$
+
+其中$\mathcal{R}_{\text{static}}$是静态检索器，使用预定义的k值。
+\end{definition}
+
+\begin{theorem}[Dynamic RAG的优势]
+Dynamic RAG相比传统RAG具有以下优势：
+\begin{enumerate}
+    \item \textbf{自适应检索}：能够根据查询复杂度动态调整检索策略
+    \item \textbf{质量反馈}：建立了从生成质量到检索策略的闭环优化
+    \item \textbf{持续学习}：通过强化学习不断优化检索策略
+    \item \textbf{实体增强}：支持大量实体信息的有效利用
+\end{enumerate}
+\end{theorem}
+
+\section{应用场景}
+
+Dynamic RAG特别适用于以下场景：
+
+\begin{enumerate}
+    \item \textbf{知识密集型任务}：如芯片设计、医疗诊断、法律咨询等
+    \item \textbf{多约束优化问题}：需要平衡多个目标的应用场景
+    \item \textbf{动态环境}：查询特征和知识库内容经常变化的情况
+    \item \textbf{实体丰富领域}：包含大量结构化实体信息的领域
+\end{enumerate}
+
+\section{总结}
+
+Dynamic RAG通过引入强化学习机制和实体增强技术，实现了检索策略的动态优化和生成质量的持续提升。其核心创新在于将传统的静态检索过程转化为基于质量反馈的自适应优化过程，为检索增强生成技术开辟了新的发展方向。
+
+\end{document} 
