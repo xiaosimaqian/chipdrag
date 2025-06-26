@@ -1,0 +1,27 @@
+{
+  "work_dir": "data/designs/ispd_2015_contest_benchmark/mgc_des_perf_1",
+  "max_iterations": 5,
+  "target_hpwl": 1000000.0,
+  "target_overflow": 0.1,
+  "use_openroad": false,
+  "state_size": 5,
+  "action_size": 8,
+  "learning_rate": 0.001,
+  "epsilon": 1.0,
+  "epsilon_decay": 0.995,
+  "epsilon_min": 0.01,
+  "memory_size": 10000,
+  "batch_size": 32,
+  "gamma": 0.95,
+  "target_update": 10,
+  "episodes": 5,
+  "max_steps": 10,
+  "save_interval": 10,
+  "reward_weights": {
+    "hpwl_improvement": 100.0,
+    "overflow_penalty": -50.0,
+    "density_reward": -10.0,
+    "utilization_reward": 20.0,
+    "convergence_reward": 200.0
+  }
+}

@@ -142,3 +142,26 @@ class VerilogParser:
         except Exception as e:
             self.logger.error(f"解析Verilog文件时出错: {str(e)}")
             raise
+
+    def parse_verilog(self, file_path: str) -> Dict[str, Any]:
+        """解析Verilog文件的便捷方法
+        
+        Args:
+            file_path: Verilog文件路径
+            
+        Returns:
+            解析后的数据字典
+        """
+        return self.parse(file_path)
+
+# 为向后兼容性提供全局函数
+def parse_verilog(file_path: str) -> Dict[str, Any]:
+    """解析Verilog文件的便捷函数
+    
+    Args:
+        file_path: Verilog文件路径
+        
+    Returns:
+        解析后的数据字典
+    """
+    return parse_verilog_file(file_path)

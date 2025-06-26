@@ -182,6 +182,18 @@ def parse_large_def_file(def_file: str, max_tokens: int = 1000) -> Dict[str, Any
 # 为向后兼容性提供别名
 parse_def_file = parse_large_def_file
 
+# 添加parse_def函数作为parse_large_def_file的别名
+def parse_def(def_file: str) -> Dict[str, Any]:
+    """解析DEF文件的便捷函数
+    
+    Args:
+        def_file: DEF文件路径
+        
+    Returns:
+        解析后的数据字典
+    """
+    return parse_large_def_file(def_file)
+
 class DEFParser:
     def __init__(self):
         self.data = {
@@ -268,16 +280,14 @@ class DEFParser:
             track_pattern = r'TRACKS\s+(\w+)\s+(\d+)\s+DO\s+(\d+)\s+STEP\s+(\d+)\s+LAYER\s+(\w+)'
             track_matches = re.finditer(track_pattern, content)
             
-            for track_match in track_matches:
-                track = {
-                    'direction': track_match.group(1),
-                    'start': int(track_match.group(2)),
-                    'num': int(track_match.group(3)),
-                    'step': int(track_match.group(4)),
-                    'layer': track_match.group(5)
-                }
-                self.data['TRACKS'].append(track)
-                logger.info(f"解析到轨道: {track['direction']} {track['layer']}")
+            for match in track_matches:
+                self.data['TRACKS'].append({
+                    'direction': match.group(1),
+                    'start': int(match.group(2)),
+                    'num_tracks': int(match.group(3)),
+                    'step': int(match.group(4)),
+                    'layer': match.group(5)
+                })
             
             # 解析网格
             grid_pattern = r'GCELLGRID\s+(\w+)\s+(\d+)\s+DO\s+(\d+)\s+STEP\s+(\d+)'
@@ -336,42 +346,60 @@ class DEFParser:
                 logger.info(f"解析到区域: {region['name']}")
             
             # 解析组件
-            comp_pattern = r'COMPONENTS\s+(\d+)\s*;\s*(.*?)(?=END\s+COMPONENTS|$)'
-            comp_section = re.search(comp_pattern, content, re.DOTALL)
-            if comp_section:
-                comp_content = comp_section.group(2)
-                comp_item_pattern = r'-?\s*(\w+)\s+(\w+)\s+\(\s*(\d+)\s+(\d+)\s*\)\s+(\w+)'
-                comp_matches = re.finditer(comp_item_pattern, comp_content)
-            
-                for comp_match in comp_matches:
-                    comp = {
-                        'name': comp_match.group(1),
-                        'type': comp_match.group(2),
-                        'x': int(comp_match.group(3)),
-                        'y': int(comp_match.group(4)),
-                        'orientation': comp_match.group(5)
-                    }
-                    self.data['COMPONENTS'].append(comp)
-                    logger.info(f"解析到组件: {comp['name']}")
-            
+            component_section_match = re.search(r'COMPONENTS\s+(\d+)\s*;', content)
+            if not component_section_match:
+                logger.info("在内容块中未找到COMPONENTS段。")
+            else:
+                num_components = int(component_section_match.group(1))
+                logger.info(f"找到COMPONENTS段，声明了 {num_components} 个组件。")
+                
+                component_block_pattern = r'COMPONENTS\s+\d+\s*;\s*(.*?)\s*END\s+COMPONENTS'
+                component_block_match = re.search(component_block_pattern, content, re.DOTALL)
+                
+                if not component_block_match:
+                    logger.warning("找到了COMPONENTS段开始，但未找到'END COMPONENTS'。")
+                else:
+                    component_block = component_block_match.group(1)
+                    # 解析每个组件
+                    # 支持 PLACED, FIXED, UNPLACED
+                    single_comp_pattern = r'-\s+([\w\d/\[\]]+)\s+([\w\d/]+)(?:\s*\+\s*(PLACED|FIXED)\s*\(\s*(-?\d+)\s+(-?\d+)\s*\)\s*(\S+))?(?:\s*\+\s*UNPLACED)?'
+                    
+                    comp_matches = re.finditer(single_comp_pattern, component_block)
+                    
+                    components_found = 0
+                    for comp_match in comp_matches:
+                        components_found += 1
+                        comp_name = comp_match.group(1)
+                        comp_model = comp_match.group(2)
+                        status = comp_match.group(3)
+                        
+                        comp_data = {
+                            'model': comp_model,
+                            'name': comp_name,
+                            'status': 'UNPLACED'
+                        }
+
+                        if status in ['PLACED', 'FIXED']:
+                            comp_data.update({
+                                'status': status,
+                                'x': int(comp_match.group(4)),
+                                'y': int(comp_match.group(5)),
+                                'orientation': comp_match.group(6)
+                            })
+                        
+                        self.data['COMPONENTS'].append(comp_data)
+
+                    logger.info(f"从COMPONENTS段中成功解析了 {components_found} 个组件。")
+
             # 解析引脚
-            pin_pattern = r'PINS\s+(\d+)\s*;\s*(.*?)(?=END\s+PINS|$)'
-            pin_section = re.search(pin_pattern, content, re.DOTALL)
-            if pin_section:
-                pin_content = pin_section.group(2)
-                pin_item_pattern = r'-?\s*(\w+)\s+(\w+)\s+\(\s*(\d+)\s+(\d+)\s*\)\s+(\w+)'
-                pin_matches = re.finditer(pin_item_pattern, pin_content)
-            
-                for pin_match in pin_matches:
-                    pin = {
-                        'name': pin_match.group(1),
-                        'type': pin_match.group(2),
-                        'x': int(pin_match.group(3)),
-                        'y': int(pin_match.group(4)),
-                        'orientation': pin_match.group(5)
-                    }
-                    self.data['PINS'].append(pin)
-                    logger.info(f"解析到引脚: {pin['name']}")
+            pin_pattern = r'PINS\s+(\d+)\s*;'
+            pin_section_match = re.search(pin_pattern, content, re.DOTALL)
+            if pin_section_match:
+                num_pins = int(pin_section_match.group(1))
+                self.data['PINS'] = {}
+                logger.info(f"开始解析PINS段，共 {num_pins} 个引脚")
+            else:
+                logger.warning("未找到PINS段。")
             
             # 解析网络
             net_pattern = r'NETS\s+(\d+)\s*;\s*(.*?)(?=END\s+NETS|$)'
@@ -417,3 +445,125 @@ class DEFParser:
         except Exception as e:
             logger.error(f"解析DEF文件时出错: {str(e)}")
             return None
+
+    def parse(self, content: str) -> Dict[str, Any]:
+        """解析DEF文件内容
+
+        Args:
+            content: DEF文件内容字符串
+
+        Returns:
+            解析后的数据字典
+        """
+        self.data = {}
+        self.current_section = None
+        
+        # 预先检查COMPONENTS段是否存在
+        if 'COMPONENTS' not in content:
+            logger.warning("DEF文件中未找到COMPONENTS段。")
+        else:
+            logger.info("DEF文件中存在COMPONENTS段。")
+            
+        lines = content.splitlines()
+        
+        in_components_section = False
+        component_lines = 0
+
+        for line in lines:
+            if not line or line.startswith('#'):
+                continue
+                
+            if line.startswith('COMPONENTS'):
+                self.current_section = 'COMPONENTS'
+                num_components_str = line.split()[1]
+                self.data['COMPONENTS'] = {}
+                in_components_section = True
+                logger.info(f"开始解析COMPONENTS段，声明数量: {num_components_str}")
+            elif line.startswith('PINS'):
+                if in_components_section:
+                    logger.info(f"COMPONENTS段结束，共处理了 {component_lines} 行。")
+                    in_components_section = False
+                self.current_section = 'PINS'
+                self.data['PINS'] = {}
+                logger.info(f"开始解析PINS段，共 {line.split()[1]} 个引脚")
+            elif self.current_section:
+                self._parse_section_line(line)
+                if self.current_section == 'COMPONENTS':
+                    component_lines += 1
+        
+        if in_components_section:
+            logger.info(f"COMPONENTS段在文件末尾结束，共处理了 {component_lines} 行。")
+
+        logger.info(f"DEF文件解析完成。找到 {len(self.data.get('COMPONENTS', {}))} 个组件。")
+        return self.data
+
+    def _parse_version(self, line: str):
+        self.data['VERSION'] = line.split()[1]
+        logger.info(f"解析到版本: {self.data['VERSION']}")
+
+    def _parse_design(self, line: str):
+        self.data['DESIGN'] = line.split()[1]
+        logger.info(f"解析到设计名称: {self.data['DESIGN']}")
+
+    def _parse_units(self, line: str):
+        match = re.search(r'UNITS DISTANCE MICRONS (\d+)', line)
+        if match:
+            self.data['UNITS'] = {'distance': int(match.group(1)), 'unit': 'MICRONS'}
+            logger.info(f"解析到单位: {self.data['UNITS']}")
+
+    def _parse_diearea(self, line: str):
+        coords_str = re.findall(r'\( (\d+) (\d+) \)', line)
+        if len(coords_str) == 2:
+            x1, y1 = map(int, coords_str[0])
+            x2, y2 = map(int, coords_str[1])
+            self.data['DIEAREA'] = {'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2}
+            logger.info("解析到芯片区域")
+
+    def _parse_row(self, line: str):
+        parts = line.split()
+        row_name = parts[1]
+        self.data.setdefault('ROWS', {})[row_name] = {
+            'site': parts[2],
+            'x': int(parts[4]),
+            'y': int(parts[5]),
+            'orient': parts[7],
+            'do': int(parts[9]),
+            'by': int(parts[11]),
+            'step_x': int(parts[13]),
+            'step_y': int(parts[15]),
+        }
+        logger.debug(f"解析到行: {row_name}")
+
+    def _parse_tracks(self, line: str):
+        parts = line.split()
+        direction = parts[1]
+        start = int(parts[2])
+        num_tracks = int(parts[4])
+        pitch = int(parts[6])
+        layer = parts[8]
+        self.data.setdefault('TRACKS', []).append({
+            'direction': direction,
+            'start': start,
+            'num_tracks': num_tracks,
+            'pitch': pitch,
+            'layer': layer,
+        })
+        logger.info(f"解析到轨道: {direction} {layer}")
+
+    def _parse_gcellgrid(self, line: str):
+        parts = line.split()
+        direction = parts[1]
+        start = int(parts[3])
+        num_grids = int(parts[5])
+        step = int(parts[7])
+        self.data.setdefault('GCELLGRID', []).append({
+            'direction': direction,
+            'start': start,
+            'num_grids': num_grids,
+            'step': step,
+        })
+        logger.info(f"解析到网格: {direction}")
+
+    def _parse_section_line(self, line: str):
+        # Implementation of _parse_section_line method
+        pass

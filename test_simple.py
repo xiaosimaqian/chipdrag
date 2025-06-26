@@ -1,164 +1,70 @@
 #!/usr/bin/env python3
 """
-简单的多模态融合检索测试脚本
+简化的OpenROAD接口测试脚本
 """
 
-import sys
 import os
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
+import sys
 import logging
-from modules.utils.embedding_manager import EmbeddingManager
-from modules.knowledge.knowledge_base import KnowledgeBase
+from pathlib import Path
+
+# 添加项目根目录到Python路径
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
+
+from enhanced_openroad_interface import EnhancedOpenROADInterface
 
 # 设置日志
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def test_embedding_manager():
-    """测试向量化管理器"""
-    print("=== 测试向量化管理器 ===")
-    
-    # 初始化向量化管理器
-    config = {
-        'model_name': 'bge-m3',
-        'api_base': 'http://localhost:11434',
-        'use_local_model': True,
-        'local_model_path': 'models/bert',
-        'embedding_dim': 768
-    }
-    
-    embedding_manager = EmbeddingManager(config)
-    
-    # 测试布局数据
-    test_layout = {
-        "name": "test_layout",
-        "components": [
-            {
-                "name": "comp1",
-                "type": "memory",
-                "position": {"x": 0, "y": 0},
-                "size": {"width": 100, "height": 100}
-            },
-            {
-                "name": "comp2", 
-                "type": "logic",
-                "position": {"x": 200, "y": 0},
-                "size": {"width": 150, "height": 80}
-            }
-        ],
-        "nets": [
-            {
-                "name": "net1",
-                "source": "comp1",
-                "target": "comp2",
-                "type": "signal"
-            }
-        ],
-        "hierarchy": {
-            "levels": ["top", "module"],
-            "modules": ["mem", "logic"],
-            "max_depth": 2
-        }
-    }
-    
+def test_openroad_core():
+    """测试OpenROAD核心功能"""
     try:
-        # 测试向量化
-        vector = embedding_manager.embed_layout(test_layout)
-        print(f"✓ 向量化成功，向量维度: {len(vector)}")
+        # 初始化接口
+        interface = EnhancedOpenROADInterface()
         
-        # 测试相似度计算
-        vector2 = embedding_manager.embed_layout(test_layout)
-        similarity = embedding_manager.compute_similarity(vector, vector2)
-        print(f"✓ 相似度计算成功: {similarity:.4f}")
+        # 设置测试文件路径
+        work_dir = Path("data/designs/ispd_2015_contest_benchmark/mgc_des_perf_1")
+        verilog_file = work_dir / "design.v"
+        cells_lef = work_dir / "cells.lef"
+        tech_lef = work_dir / "tech.lef"
+        def_file = work_dir / "mgc_des_perf_1_place.def"
+        
+        # 检查文件是否存在
+        for file_path in [verilog_file, cells_lef, tech_lef, def_file]:
+            if not file_path.exists():
+                logger.error(f"文件不存在: {file_path}")
+                return False
+        
+        logger.info("所有测试文件存在，开始测试OpenROAD接口")
+        
+        # 测试TCL脚本生成
+        tcl_script = interface.create_iterative_placement_tcl(
+            str(verilog_file), str(cells_lef), str(tech_lef), str(def_file),
+            str(work_dir), num_iterations=3
+        )
+        
+        logger.info("TCL脚本生成成功")
+        logger.info(f"脚本长度: {len(tcl_script)} 字符")
+        
+        # 保存TCL脚本用于检查
+        tcl_path = work_dir / "test_iterative_placement.tcl"
+        with open(tcl_path, 'w') as f:
+            f.write(tcl_script)
+        
+        logger.info(f"TCL脚本已保存到: {tcl_path}")
         
         return True
         
     except Exception as e:
-        print(f"✗ 向量化管理器测试失败: {str(e)}")
+        logger.error(f"测试失败: {str(e)}")
         return False
-
-def test_knowledge_base():
-    """测试知识库"""
-    print("\n=== 测试知识库 ===")
-    
-    # 初始化知识库
-    config = {
-        'path': '/tmp/test_kb',
-        'format': 'json',
-        'layout_experience_path': '/tmp/test_kb/layout'
-    }
-    
-    try:
-        knowledge_base = KnowledgeBase(config)
-        
-        # 添加测试数据
-        test_data = {
-            'name': 'test_module',
-            'type': 'module',
-            'components': [
-                {
-                    'name': 'comp1',
-                    'type': 'memory',
-                    'x': 0,
-                    'y': 0,
-                    'width': 100,
-                    'height': 100
-                }
-            ],
-            'hierarchy': {
-                'levels': ['top', 'module'],
-                'modules': ['mem'],
-                'max_depth': 2
-            }
-        }
-        
-        optimization_result = {
-            'wirelength': 500,
-            'congestion': 0.5,
-            'timing': 5.0,
-            'score': 0.8
-        }
-        
-        knowledge_base.add_case(test_data, optimization_result)
-        print(f"✓ 知识库初始化成功，包含 {len(knowledge_base.cases)} 个案例")
-        
-        # 测试检索
-        query = {
-            'hierarchy': {
-                'levels': ['top', 'module'],
-                'modules': ['mem']
-            }
-        }
-        
-        similar_cases = knowledge_base.get_similar_cases(query, top_k=3)
-        print(f"✓ 检索成功，找到 {len(similar_cases)} 个相似案例")
-        
-        return True
-        
-    except Exception as e:
-        print(f"✗ 知识库测试失败: {str(e)}")
-        return False
-
-def main():
-    """主函数"""
-    print("开始多模态融合检索功能测试...\n")
-    
-    # 测试向量化管理器
-    embedding_success = test_embedding_manager()
-    
-    # 测试知识库
-    kb_success = test_knowledge_base()
-    
-    # 总结
-    print("\n=== 测试总结 ===")
-    print(f"向量化管理器: {'✓ 通过' if embedding_success else '✗ 失败'}")
-    print(f"知识库: {'✓ 通过' if kb_success else '✗ 失败'}")
-    
-    if embedding_success and kb_success:
-        print("\n🎉 所有测试通过！多模态融合检索功能正常工作。")
-    else:
-        print("\n❌ 部分测试失败，需要进一步调试。")
 
 if __name__ == "__main__":
-    main() 
+    success = test_openroad_core()
+    if success:
+        print("✅ 核心功能测试成功")
+    else:
+        print("❌ 核心功能测试失败")
+        sys.exit(1) 

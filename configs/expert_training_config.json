@@ -1,0 +1,56 @@
+{
+    "expert_training": {
+        "design_config": {
+            "floorplan_def": "floorplan.def",
+            "expert_def": "mgc_des_perf_1_place.def",
+            "verilog_file": "design.v",
+            "lef_files": ["cells.lef", "tech.lef"]
+        },
+        "training_config": {
+            "learning_rate": 0.0003,
+            "num_episodes": 500,
+            "epsilon_start": 0.9,
+            "epsilon_end": 0.05,
+            "epsilon_decay": 0.995,
+            "expert_weight": 0.3,
+            "max_steps_per_episode": 10,
+            "batch_size": 1
+        },
+        "network_config": {
+            "state_dim": 8,
+            "action_dim": 13,
+            "hidden_dim": 256,
+            "dropout_rate": 0.2
+        },
+        "reward_config": {
+            "ppa_weights": {
+                "timing": 0.4,
+                "area": 0.3,
+                "power": 0.3
+            },
+            "expert_similarity_weight": 0.3,
+            "improvement_weight": 0.2,
+            "k_selection_weight": 0.1
+        },
+        "evaluation_config": {
+            "eval_interval": 50,
+            "eval_episodes": 10,
+            "save_interval": 100
+        }
+    },
+    "simple_demo": {
+        "training_config": {
+            "learning_rate": 0.001,
+            "num_episodes": 100,
+            "epsilon_start": 0.8,
+            "epsilon_end": 0.1,
+            "epsilon_decay": 0.98,
+            "expert_weight": 0.2
+        },
+        "network_config": {
+            "state_dim": 6,
+            "action_dim": 13,
+            "hidden_dim": 128
+        }
+    }
+} 
