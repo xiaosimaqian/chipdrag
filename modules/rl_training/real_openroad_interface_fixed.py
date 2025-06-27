@@ -160,16 +160,42 @@ set tech [ord::get_db_tech]
 puts "初始化布局 (die: {die_size}x{die_size}, core: {core_size}x{core_size})..."
 initialize_floorplan -die_area "0 0 {die_size} {die_size}" -core_area "10 10 {core_size} {core_size}" -site core
 
-# 设置布局参数 - 使用更保守的设置
-set_placement_padding -global -left 1 -right 1
+# 设置布局参数 - 使用更宽松的设置
+set_placement_padding -global -left 2 -right 2
 
-# 全局布局 - 使用动态密度目标
+# 全局布局 - 使用动态密度目标，增加容错性
 puts "开始全局布局 (密度目标: {density_target})..."
-global_placement -density {density_target}
+global_placement -density {density_target} -overflow 0.1
 
-# 详细布局
+# 检查全局布局结果
+set db [ord::get_db]
+set chip [$db getChip]
+set block [$chip getBlock]
+set insts [$block getInsts]
+set placed_count 0
+set total_count 0
+
+foreach inst $insts {{
+    if {{[$inst isPlaced]}} {{
+        incr placed_count
+    }}
+    incr total_count
+}}
+
+puts "全局布局完成: $placed_count/$total_count 实例已放置"
+
+# 详细布局 - 使用更宽松的参数
 puts "开始详细布局..."
-detailed_placement
+if {{[catch {{detailed_placement -max_displacement 5}} result]}} {{
+    puts "详细布局失败，尝试使用更宽松的参数..."
+    if {{[catch {{detailed_placement -max_displacement 10}} result]}} {{
+        puts "详细布局仍然失败，跳过详细布局步骤"
+    }} else {{
+        puts "详细布局成功完成"
+    }}
+}} else {{
+    puts "详细布局成功完成"
+}}
 
 # 输出结果
 write_def placement_result.def
@@ -229,11 +255,13 @@ puts "输出文件: placement_result.def, placement_result.v"
             
             print(f"执行OpenROAD (超时: {timeout}秒)...")
             
+            # 获取绝对路径
+            abs_work_dir = os.path.abspath(self.work_dir)
             # 执行OpenROAD命令
             start_time = time.time()
             result = subprocess.run([
                 'docker', 'run', '--rm',
-                '-v', f'{self.work_dir}:/workspace',
+                '-v', f'{abs_work_dir}:/workspace',
                 '-w', '/workspace',
                 'openroad/flow-ubuntu22.04-builder:21e414',
                 'bash', '-c',
