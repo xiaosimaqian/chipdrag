@@ -201,7 +201,8 @@ if {{[catch {{detailed_placement -max_displacement 5}} result]}} {{
 write_def placement_result.def
 write_verilog placement_result.v
 
-puts "布局优化完成"
+# 输出布局完成信息
+puts "=== 布局完成 ==="
 puts "输出文件: placement_result.def, placement_result.v"
 """
         return tcl_script
@@ -281,14 +282,15 @@ puts "输出文件: placement_result.def, placement_result.v"
                 # 尝试从输出中提取线长和面积信息
                 output_lines = result.stdout.split('\n')
                 for line in output_lines:
-                    if 'HPWL' in line:
+                    if '估计线长:' in line:
                         try:
-                            wirelength = float(line.split()[-1])
+                            wirelength = float(line.split(':')[-1].strip())
                         except:
                             pass
-                    elif 'Core area' in line:
+                    elif '核心面积:' in line:
                         try:
-                            area = float(line.split()[-2])
+                            area_str = line.split(':')[-1].strip()
+                            area = float(area_str.split()[0])  # 提取数字部分
                         except:
                             pass
             
@@ -607,7 +609,19 @@ END core
                     diearea_match = re.search(r'DIEAREA\s+\(\s*(\d+)\s+(\d+)\s*\)\s*\(\s*(\d+)\s+(\d+)\s*\)', content)
                     if diearea_match:
                         x1, y1, x2, y2 = map(int, diearea_match.groups())
+                        
+                        # 检查单位定义
+                        units_match = re.search(r'UNITS\s+DISTANCE\s+MICRONS\s+(\d+)', content)
+                        if units_match:
+                            units_factor = int(units_match.group(1))
+                            # 将坐标转换为微米
+                            x1 = x1 // units_factor
+                            y1 = y1 // units_factor
+                            x2 = x2 // units_factor
+                            y2 = y2 // units_factor
+                        
                         stats['core_area'] = (x2 - x1) * (y2 - y1)
+                        logger.info(f"从DEF文件提取面积: {x1}x{y1} 到 {x2}x{y2}, 面积: {stats['core_area']} um²")
             
             # 如果DEF文件中没有找到，尝试从Verilog文件中提取基本信息
             if stats['num_instances'] == 0 and self.verilog_file.exists():
@@ -639,7 +653,7 @@ END core
 
     def _calculate_optimal_parameters(self, design_stats: Dict[str, Any]) -> Dict[str, Any]:
         """
-        根据设计规模计算最优参数
+        根据设计规模计算最优参数（增强版）
         
         Args:
             design_stats: 设计统计信息
@@ -657,16 +671,26 @@ END core
         base_die_size = 800
         base_core_size = 790
         
-        # 根据实例数量调整密度目标
-        if num_instances > 100000:  # 超大型设计
-            density_target = 0.85  # 提高密度目标
+        # 根据实例数量调整参数（增强版）
+        if num_instances > 500000:  # 超超大型设计（如superblue系列）
+            density_target = 0.60  # 降低密度目标，避免利用率过高
+            die_size = 2000
+            core_size = 1990
+            logger.info(f"检测到超超大型设计 ({num_instances}实例)，使用特殊参数")
+        elif num_instances > 200000:  # 超大型设计
+            density_target = 0.65
+            die_size = 1600
+            core_size = 1590
+            logger.info(f"检测到超大型设计 ({num_instances}实例)，使用宽松参数")
+        elif num_instances > 100000:  # 大型设计
+            density_target = 0.75
             die_size = 1200
             core_size = 1190
-        elif num_instances > 50000:  # 大型设计
+        elif num_instances > 50000:  # 中型设计
             density_target = 0.80
             die_size = 1000
             core_size = 990
-        elif num_instances > 20000:  # 中型设计
+        elif num_instances > 20000:  # 中小型设计
             density_target = 0.75
             die_size = 900
             core_size = 890
@@ -676,16 +700,58 @@ END core
             core_size = base_core_size
         
         # 根据网络数量进一步调整
-        if num_nets > 100000:
-            density_target = min(0.90, density_target + 0.05)
+        if num_nets > 200000:
+            density_target = min(0.70, density_target - 0.05)  # 降低密度
+            die_size = max(die_size, 1800)
+            core_size = die_size - 10
+        elif num_nets > 100000:
+            density_target = min(0.80, density_target + 0.05)
             die_size = max(die_size, 1400)
             core_size = die_size - 10
         
-        # 根据核心面积调整
-        if core_area > 500000:  # 500,000 um²
-            density_target = min(0.90, density_target + 0.05)
-            die_size = max(die_size, 1200)
+        # 根据核心面积调整（如果DEF文件中提供了面积信息）
+        if core_area > 0:
+            # 计算所需的die尺寸（基于面积和密度）
+            required_area = core_area / density_target
+            required_side = int(required_area ** 0.5)
+            
+            # 确保die尺寸足够大
+            if required_side > die_size:
+                die_size = required_side + 100  # 增加100um的裕量
+                core_size = die_size - 10
+                logger.info(f"根据面积需求调整die尺寸: {die_size}x{die_size}")
+        
+        # 特殊处理：针对已知的超大设计
+        design_name = self.work_dir.name if hasattr(self.work_dir, 'name') else ""
+        if 'superblue' in design_name.lower():
+            # superblue系列特殊处理
+            density_target = 0.55  # 进一步降低密度
+            die_size = max(die_size, 2200)
             core_size = die_size - 10
+            logger.info(f"检测到superblue设计，使用特殊参数: density={density_target}, die={die_size}")
+        elif 'mgc' in design_name.lower() and num_instances > 100000:
+            # mgc系列大型设计
+            density_target = min(0.70, density_target)
+            die_size = max(die_size, 1500)
+            core_size = die_size - 10
+            logger.info(f"检测到mgc大型设计，调整参数: density={density_target}, die={die_size}")
+        
+        # 最终验证：确保参数合理
+        if density_target < 0.5:
+            density_target = 0.5
+        if density_target > 0.9:
+            density_target = 0.9
+        
+        # 确保die和core尺寸合理
+        if die_size < 600:
+            die_size = 600
+        if die_size > 3000:
+            die_size = 3000
+        
+        # 确保core_size始终小于die_size
+        core_size = die_size - 10
+        
+        logger.info(f"最终参数: density={density_target:.2f}, die={die_size}x{die_size}, core={core_size}x{core_size}")
         
         return {
             'density_target': density_target,
