@@ -100,14 +100,18 @@ class RealOpenROADInterface:
     def _generate_tcl_script(self, 
                             density_target: float = 0.7,
                             wirelength_weight: float = 1.0,
-                            density_weight: float = 1.0) -> str:
+                            density_weight: float = 1.0,
+                            die_size: int = 800,
+                            core_size: int = 790) -> str:
         """
-        生成OpenROAD TCL脚本 (根据官方API文档修正)
+        生成OpenROAD TCL脚本 (使用动态参数)
         
         Args:
             density_target: 密度目标
             wirelength_weight: 线长权重
             density_weight: 密度权重
+            die_size: 芯片尺寸
+            core_size: 核心区域尺寸
             
         Returns:
             TCL脚本内容
@@ -115,113 +119,65 @@ class RealOpenROADInterface:
         # 检查LIB文件
         has_lib_files = self._check_lib_files()
         
-        # 根据OpenROAD手册，先读取技术LEF，再读取单元LEF
-        lef_read_cmds = [
-            f"read_lef -tech {self.tech_lef.name}",
-            f"read_lef -library {self.cells_lef.name}"
-        ]
-        lef_read_cmds_str = "\n".join(lef_read_cmds)
-        
         # 生成LIB读取命令
         lib_read_cmds = []
-        if self.use_lib and has_lib_files:
+        if has_lib_files:
             for lib_file in self.lib_files:
                 lib_read_cmds.append(f"read_liberty {lib_file.name}")
         lib_read_cmds_str = "\n".join(lib_read_cmds)
         
-        # 根据是否使用LIB且有LIB文件生成不同的TCL脚本
-        if self.use_lib and has_lib_files:
-            # 有LIB文件且启用LIB模式
-            tcl_script = f"""
-# OpenROAD布局优化脚本 (LIB模式 - 有LIB文件)
+        # 检测顶层模块名
+        top_module = self._detect_top_module()
+        
+        # 使用动态参数生成TCL脚本
+        tcl_script = f"""
+# OpenROAD布局优化脚本 (智能参数版本)
 # 设计: {self.verilog_file.name}
-# 参数: density_target={density_target}, wirelength_weight={wirelength_weight}, density_weight={density_weight}
+# 参数: density_target={density_target}, die_size={die_size}x{die_size}, core_size={core_size}x{core_size}
 
-# 完全重置数据库 - 确保每次运行都是全新状态
+# 完全重置数据库
 if {{[info exists ::ord::db]}} {{
     ord::reset_db
 }}
 
-# 读取LEF文件 - 按照OpenROAD手册顺序
-{lef_read_cmds_str}
+# 读取LEF文件 - 先读取技术LEF，再读取单元LEF
+read_lef {self.tech_lef.name}
+read_lef {self.cells_lef.name}
 
-# 读取LIB文件
+# 读取Liberty文件（如果存在）
 {lib_read_cmds_str}
 
 # 读取Verilog文件
 read_verilog {self.verilog_file.name}
 
-# 连接设计 - 指定顶层模块名
-link_design {self._detect_top_module()}
+# 连接设计
+link_design {top_module}
 
-# 初始化布局 - 使用默认站点
-initialize_floorplan -die_area "0 0 1000 1000" -core_area "10 10 990 990" -site core
+# 设置工艺参数
+set tech [ord::get_db_tech]
 
-# 设置布局参数
-set_placement_padding -global -left 2 -right 2
+# 使用动态计算的布局参数
+puts "初始化布局 (die: {die_size}x{die_size}, core: {core_size}x{core_size})..."
+initialize_floorplan -die_area "0 0 {die_size} {die_size}" -core_area "10 10 {core_size} {core_size}" -site core
 
-# 全局布局
+# 设置布局参数 - 使用更保守的设置
+set_placement_padding -global -left 1 -right 1
+
+# 全局布局 - 使用动态密度目标
+puts "开始全局布局 (密度目标: {density_target})..."
 global_placement -density {density_target}
 
 # 详细布局
+puts "开始详细布局..."
 detailed_placement
 
 # 输出结果
-write_def -output placement_result.def
-write_verilog -output placement_result.v
+write_def placement_result.def
+write_verilog placement_result.v
 
-# 报告结果
-report_placement
-report_timing
-report_area
-
-puts "OpenROAD布局优化完成"
+puts "布局优化完成"
+puts "输出文件: placement_result.def, placement_result.v"
 """
-        else:
-            # 无LIB文件或未启用LIB模式
-            tcl_script = f"""
-# OpenROAD布局优化脚本 (无LIB模式)
-# 设计: {self.verilog_file.name}
-# 参数: density_target={density_target}, wirelength_weight={wirelength_weight}, density_weight={density_weight}
-
-# 完全重置数据库 - 确保每次运行都是全新状态
-if {{[info exists ::ord::db]}} {{
-    ord::reset_db
-}}
-
-# 读取LEF文件 - 按照OpenROAD手册顺序
-{lef_read_cmds_str}
-
-# 读取Verilog文件
-read_verilog {self.verilog_file.name}
-
-# 连接设计 - 指定顶层模块名
-link_design {self._detect_top_module()}
-
-# 初始化布局 - 使用默认站点
-initialize_floorplan -die_area "0 0 1000 1000" -core_area "10 10 990 990" -site core
-
-# 设置布局参数
-set_placement_padding -global -left 2 -right 2
-
-# 全局布局
-global_placement -density {density_target}
-
-# 详细布局
-detailed_placement
-
-# 输出结果
-write_def -output placement_result.def
-write_verilog -output placement_result.v
-
-# 报告结果
-report_placement
-report_timing
-report_area
-
-puts "OpenROAD布局优化完成"
-"""
-        
         return tcl_script
     
     def run_placement(self, 
@@ -240,11 +196,27 @@ puts "OpenROAD布局优化完成"
             执行结果字典
         """
         try:
+            # 获取设计统计信息
+            design_stats = self._extract_design_stats()
+            
+            # 计算最优参数
+            optimal_params = self._calculate_optimal_parameters(design_stats)
+            
+            # 使用计算出的参数
+            actual_density = optimal_params['density_target']
+            die_size = optimal_params['die_size']
+            core_size = optimal_params['core_size']
+            
+            print(f"设计统计: {design_stats['num_instances']} 实例, {design_stats['num_nets']} 网络")
+            print(f"智能参数: 密度={actual_density}, 芯片尺寸={die_size}x{die_size}, 核心尺寸={core_size}x{core_size}")
+            
             # 生成TCL脚本
             tcl_script = self._generate_tcl_script(
-                density_target=density_target,
+                density_target=actual_density,
                 wirelength_weight=wirelength_weight,
-                density_weight=density_weight
+                density_weight=density_weight,
+                die_size=die_size,
+                core_size=core_size
             )
             
             # 写入TCL文件
@@ -252,75 +224,81 @@ puts "OpenROAD布局优化完成"
             with open(tcl_file, 'w') as f:
                 f.write(tcl_script)
             
-            logger.info(f"TCL脚本已生成: {tcl_file}")
+            # 计算智能超时时间
+            timeout = self._calculate_timeout(design_stats)
             
-            # 确保工作目录是绝对路径
-            work_dir_abs = self.work_dir.resolve()
+            print(f"执行OpenROAD (超时: {timeout}秒)...")
             
-            # 构建Docker命令 - 使用直接执行方式
-            docker_cmd = [
-                "docker", "run", "--rm",
-                "-v", f"{work_dir_abs}:/workspace",
-                "-w", "/workspace",
-                "openroad/flow-ubuntu22.04-builder:21e414",
-                "bash", "-c",
-                f"export PATH=/OpenROAD-flow-scripts/tools/install/OpenROAD/bin:\$PATH && openroad -no_init -no_splash -exit openroad_script.tcl"
-            ]
-            
-            logger.info(f"执行Docker命令: {' '.join(docker_cmd)}")
-            
-            # 直接执行Docker命令
-            import subprocess, time
+            # 执行OpenROAD命令
             start_time = time.time()
+            result = subprocess.run([
+                'docker', 'run', '--rm',
+                '-v', f'{self.work_dir}:/workspace',
+                '-w', '/workspace',
+                'openroad/flow-ubuntu22.04-builder:21e414',
+                'bash', '-c',
+                f'export PATH=/OpenROAD-flow-scripts/tools/install/OpenROAD/bin:$PATH && openroad -no_init -no_splash -exit openroad_script.tcl'
+            ], capture_output=True, text=True, timeout=timeout)
             
-            try:
-                result = subprocess.run(
-                    docker_cmd, 
-                    capture_output=True, 
-                    text=True, 
-                    timeout=1800  # 30分钟超时
-                )
-                execution_time = time.time() - start_time
-                
-                # 处理输出
-                stdout_lines = result.stdout.split('\n') if result.stdout else []
-                stderr_lines = result.stderr.split('\n') if result.stderr else []
-                
-                # 检查是否成功
-                success = result.returncode == 0 and any("OpenROAD布局优化完成" in l for l in stdout_lines)
-                
-                # 提取关键指标
-                metrics = self._extract_metrics(stdout_lines, stderr_lines)
-                
-                return {
-                    'success': success,
-                    'return_code': result.returncode,
-                    'execution_time': execution_time,
-                    'stdout': stdout_lines,
-                    'stderr': stderr_lines,
-                    'metrics': metrics
-                }
-                
-            except subprocess.TimeoutExpired:
-                logger.error("OpenROAD执行超时")
-                return {
-                    'success': False,
-                    'return_code': -1,
-                    'execution_time': time.time() - start_time,
-                    'stdout': [],
-                    'stderr': ["执行超时"],
-                    'metrics': {}
-                }
-                
-        except Exception as e:
-            logger.error(f"运行OpenROAD时发生错误: {e}")
+            execution_time = time.time() - start_time
+            
+            # 检查结果
+            success = result.returncode == 0
+            
+            # 提取结果信息
+            wirelength = None
+            area = None
+            
+            if success:
+                # 尝试从输出中提取线长和面积信息
+                output_lines = result.stdout.split('\n')
+                for line in output_lines:
+                    if 'HPWL' in line:
+                        try:
+                            wirelength = float(line.split()[-1])
+                        except:
+                            pass
+                    elif 'Core area' in line:
+                        try:
+                            area = float(line.split()[-2])
+                        except:
+                            pass
+            
+            return {
+                'success': success,
+                'execution_time': execution_time,
+                'return_code': result.returncode,
+                'stdout': result.stdout,
+                'stderr': result.stderr,
+                'wirelength': wirelength,
+                'area': area,
+                'design_stats': design_stats,
+                'optimal_params': optimal_params
+            }
+            
+        except subprocess.TimeoutExpired:
             return {
                 'success': False,
+                'execution_time': timeout,
                 'return_code': -1,
+                'stdout': '',
+                'stderr': '执行超时',
+                'wirelength': None,
+                'area': None,
+                'design_stats': design_stats if 'design_stats' in locals() else {},
+                'optimal_params': optimal_params if 'optimal_params' in locals() else {}
+            }
+        except Exception as e:
+            return {
+                'success': False,
                 'execution_time': 0,
-                'stdout': [],
-                'stderr': [str(e)],
-                'metrics': {}
+                'return_code': -1,
+                'stdout': '',
+                'stderr': str(e),
+                'wirelength': None,
+                'area': None,
+                'design_stats': design_stats if 'design_stats' in locals() else {},
+                'optimal_params': optimal_params if 'optimal_params' in locals() else {}
             }
     
     def _analyze_output(self, stdout: List[str], stderr: List[str]) -> Dict[str, Any]:
@@ -463,6 +441,231 @@ puts "OpenROAD布局优化完成"
                     pass
         
         return metrics
+
+    def _extract_site_info(self) -> str:
+        """
+        从LEF文件中提取站点信息
+        对于ISPD基准测试，所有设计都使用相同的core站点
+        
+        Returns:
+            站点名称
+        """
+        try:
+            # 检查tech.lef文件中的站点定义
+            if self.tech_lef.exists():
+                with open(self.tech_lef, 'r') as f:
+                    content = f.read()
+                    # 查找SITE定义
+                    import re
+                    site_match = re.search(r'SITE\s+(\w+)', content)
+                    if site_match:
+                        site_name = site_match.group(1)
+                        logger.info(f"从LEF文件中提取到站点: {site_name}")
+                        return site_name
+            
+            # 如果无法从LEF文件中提取，使用ISPD基准测试的默认站点
+            logger.info("使用ISPD基准测试默认站点: core")
+            return "core"
+            
+        except Exception as e:
+            logger.warning(f"站点提取失败: {e}，使用默认站点: core")
+            return "core"
+    
+    def _get_ispd_site_config(self) -> str:
+        """
+        获取ISPD基准测试的通用站点配置
+        所有ISPD基准测试都使用相同的core站点定义
+        
+        Returns:
+            站点配置字符串
+        """
+        return """
+# ISPD基准测试通用站点配置
+# 所有ISPD基准测试都使用相同的core站点
+SITE core
+  SIZE 0.20 BY 2.00 ;
+  CLASS CORE ;
+  SYMMETRY Y  ;
+END core
+"""
+
+    def _calculate_timeout(self, design_stats: Dict[str, Any]) -> int:
+        """
+        根据设计规模计算智能超时时间
+        
+        Args:
+            design_stats: 设计统计信息
+            
+        Returns:
+            超时时间（秒）
+        """
+        # 基础超时时间
+        base_timeout = 300  # 5分钟
+        
+        # 从设计统计中提取关键指标
+        num_instances = design_stats.get('num_instances', 0)
+        num_nets = design_stats.get('num_nets', 0)
+        num_pins = design_stats.get('num_pins', 0)
+        core_area = design_stats.get('core_area', 0)
+        
+        # 根据实例数量调整超时时间
+        if num_instances > 0:
+            # 每1000个实例增加1分钟
+            instance_factor = max(1.0, num_instances / 1000.0)
+            timeout = int(base_timeout * instance_factor)
+        else:
+            timeout = base_timeout
+        
+        # 根据网络数量进一步调整
+        if num_nets > 0:
+            # 每1000个网络增加30秒
+            net_factor = max(1.0, num_nets / 1000.0 * 0.5)
+            timeout = int(timeout * net_factor)
+        
+        # 根据核心面积调整
+        if core_area > 0:
+            # 每100,000 um²增加1分钟
+            area_factor = max(1.0, core_area / 100000.0)
+            timeout = int(timeout * area_factor)
+        
+        # 设置最小和最大超时限制
+        min_timeout = 120   # 2分钟
+        max_timeout = 1800  # 30分钟
+        
+        timeout = max(min_timeout, min(timeout, max_timeout))
+        
+        logger.info(f"设计规模: {num_instances}实例, {num_nets}网络, {core_area:.0f}um²面积")
+        logger.info(f"计算超时时间: {timeout}秒")
+        
+        return timeout
+    
+    def _extract_design_stats(self) -> Dict[str, Any]:
+        """
+        提取设计统计信息
+        
+        Returns:
+            设计统计信息字典
+        """
+        stats = {
+            'num_instances': 0,
+            'num_nets': 0,
+            'num_pins': 0,
+            'core_area': 0
+        }
+        
+        try:
+            # 从DEF文件中提取实例数量和引脚数量
+            if self.def_file.exists():
+                with open(self.def_file, 'r') as f:
+                    content = f.read()
+                    
+                    # 提取组件数量
+                    import re
+                    components_match = re.search(r'COMPONENTS\s+(\d+)', content)
+                    if components_match:
+                        stats['num_instances'] = int(components_match.group(1))
+                    
+                    # 提取引脚数量
+                    pins_match = re.search(r'PINS\s+(\d+)', content)
+                    if pins_match:
+                        stats['num_pins'] = int(pins_match.group(1))
+                    
+                    # 提取网络数量 - 使用行首匹配确保匹配NETS而不是SPECIALNETS
+                    nets_match = re.search(r'^NETS\s+(\d+)', content, re.MULTILINE)
+                    if nets_match:
+                        stats['num_nets'] = int(nets_match.group(1))
+                    
+                    # 提取核心面积
+                    diearea_match = re.search(r'DIEAREA\s+\(\s*(\d+)\s+(\d+)\s*\)\s*\(\s*(\d+)\s+(\d+)\s*\)', content)
+                    if diearea_match:
+                        x1, y1, x2, y2 = map(int, diearea_match.groups())
+                        stats['core_area'] = (x2 - x1) * (y2 - y1)
+            
+            # 如果DEF文件中没有找到，尝试从Verilog文件中提取基本信息
+            if stats['num_instances'] == 0 and self.verilog_file.exists():
+                with open(self.verilog_file, 'r') as f:
+                    content = f.read()
+                    
+                    # 网络数量估算（基于wire/reg声明）
+                    wire_count = content.count('wire') + content.count('reg')
+                    stats['num_nets'] = wire_count
+                    
+                    # 引脚数量估算（基于端口声明）
+                    port_count = content.count('input') + content.count('output') + content.count('inout')
+                    stats['num_pins'] = port_count
+            
+            # 从LEF文件中提取面积信息（如果DEF文件中没有找到）
+            if stats['core_area'] == 0 and self.tech_lef.exists():
+                with open(self.tech_lef, 'r') as f:
+                    content = f.read()
+                    
+                    # 查找SITE定义来估算面积
+                    if 'SITE core' in content:
+                        # 使用默认的核心面积
+                        stats['core_area'] = 800 * 800  # 800x800 um²
+                        
+        except Exception as e:
+            logger.warning(f"提取设计统计信息时出错: {e}")
+        
+        return stats
+
+    def _calculate_optimal_parameters(self, design_stats: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        根据设计规模计算最优参数
+        
+        Args:
+            design_stats: 设计统计信息
+            
+        Returns:
+            最优参数字典
+        """
+        # 从设计统计中提取关键指标
+        num_instances = design_stats.get('num_instances', 0)
+        num_nets = design_stats.get('num_nets', 0)
+        core_area = design_stats.get('core_area', 0)
+        
+        # 基础参数
+        base_density = 0.70
+        base_die_size = 800
+        base_core_size = 790
+        
+        # 根据实例数量调整密度目标
+        if num_instances > 100000:  # 超大型设计
+            density_target = 0.85  # 提高密度目标
+            die_size = 1200
+            core_size = 1190
+        elif num_instances > 50000:  # 大型设计
+            density_target = 0.80
+            die_size = 1000
+            core_size = 990
+        elif num_instances > 20000:  # 中型设计
+            density_target = 0.75
+            die_size = 900
+            core_size = 890
+        else:  # 小型设计
+            density_target = base_density
+            die_size = base_die_size
+            core_size = base_core_size
+        
+        # 根据网络数量进一步调整
+        if num_nets > 100000:
+            density_target = min(0.90, density_target + 0.05)
+            die_size = max(die_size, 1400)
+            core_size = die_size - 10
+        
+        # 根据核心面积调整
+        if core_area > 500000:  # 500,000 um²
+            density_target = min(0.90, density_target + 0.05)
+            die_size = max(die_size, 1200)
+            core_size = die_size - 10
+        
+        return {
+            'density_target': density_target,
+            'die_size': die_size,
+            'core_size': core_size,
+            'wirelength_weight': 1.0,
+            'density_weight': 1.0
+        }
 
 def main():
     """主函数 - 测试接口"""
