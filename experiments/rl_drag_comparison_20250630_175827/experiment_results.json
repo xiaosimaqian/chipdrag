@@ -1,0 +1,61 @@
+{
+  "experiment_info": {
+    "name": "rl_drag_comparison",
+    "work_dir": "data/designs/ispd_2015_contest_benchmark/mgc_des_perf_1",
+    "start_time": "2025-06-30T17:58:27.062198",
+    "rl_episodes": 30,
+    "rl_max_steps": 5,
+    "use_offline_rl": true
+  },
+  "offline_rl_results": {},
+  "online_rl_results": {
+    "error": "index 3 is out of bounds for axis 0 with size 3"
+  },
+  "drag_recommendations": {},
+  "comparison_results": {
+    "offline_rl_params": {},
+    "online_rl_params": {},
+    "drag_params": {},
+    "offline_rl_performance": {},
+    "online_rl_performance": {},
+    "drag_performance": {},
+    "comparison_metrics": {
+      "success_comparison": {
+        "offline_rl_success": false,
+        "online_rl_success": false,
+        "drag_success": false,
+        "all_success": false
+      }
+    }
+  },
+  "final_analysis": {
+    "experiment_summary": {
+      "experiment_name": "rl_drag_comparison",
+      "work_dir": "data/designs/ispd_2015_contest_benchmark/mgc_des_perf_1",
+      "total_duration": 46.755003,
+      "components_available": {
+        "openroad": true,
+        "drag": true,
+        "rl": true
+      }
+    },
+    "rl_analysis": {
+      "status": "failed",
+      "error": "index 3 is out of bounds for axis 0 with size 3"
+    },
+    "drag_analysis": {
+      "status": "success",
+      "similar_cases_count": 0,
+      "recommended_params": {}
+    },
+    "comparison_analysis": {
+      "status": "success",
+      "hpwl_winner": "unknown",
+      "time_winner": "unknown",
+      "overall_winner": "DRAG"
+    },
+    "recommendations": [
+      "DRAG\u65b9\u6cd5\u5728\u672c\u6b21\u5b9e\u9a8c\u4e2d\u8868\u73b0\u66f4\u4f18\uff0c\u5efa\u8bae\u5728\u5b9e\u9645\u5e94\u7528\u4e2d\u4f18\u5148\u8003\u8651"
+    ]
+  }
+}

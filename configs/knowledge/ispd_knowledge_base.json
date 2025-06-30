@@ -1,0 +1,129 @@
+{
+    "name": "ispd_knowledge_base",
+    "version": "2.0.0",
+    "description": "ISPD 2015基准测试知识库配置",
+    
+    "data_sources": {
+        "ispd_cases": {
+            "type": "file",
+            "path": "data/knowledge_base/ispd_cases.json",
+            "format": "json",
+            "encoding": "utf-8",
+            "description": "ISPD 2015实验结果案例数据"
+        },
+        "ispd_metadata": {
+            "type": "file", 
+            "path": "data/knowledge_base/ispd_metadata.json",
+            "format": "json",
+            "encoding": "utf-8",
+            "description": "ISPD知识库元数据"
+        },
+        "multimodal_data": {
+            "type": "file",
+            "path": "data/processed/multimodal/all_multimodal.json",
+            "format": "json",
+            "encoding": "utf-8",
+            "description": "多模态数据汇总"
+        }
+    },
+    
+    "case_structure": {
+        "case_id": "case_id",
+        "design_name": "design_name",
+        "layout": {
+            "verilog": "layout.verilog",
+            "def": "layout.def", 
+            "tech_lef": "layout.tech_lef",
+            "cells_lef": "layout.cells_lef",
+            "placement_result": "layout.placement_result",
+            "placement_verilog": "layout.placement_verilog"
+        },
+        "optimization_result": {
+            "success": "optimization_result.success",
+            "execution_time": "optimization_result.execution_time",
+            "wirelength": "optimization_result.wirelength",
+            "area": "optimization_result.area",
+            "stdout_summary": "optimization_result.stdout_summary"
+        },
+        "metadata": {
+            "design_type": "metadata.design_type",
+            "complexity": "metadata.complexity",
+            "constraints": "metadata.constraints",
+            "port_count": "metadata.port_count",
+            "core_bbox": "metadata.core_bbox",
+            "rows_info": "metadata.rows_info",
+            "import_date": "metadata.import_date",
+            "source": "metadata.source"
+        },
+        "features": {
+            "text": "features.text",
+            "structured": "features.structured"
+        }
+    },
+    
+    "search_config": {
+        "similarity_threshold": 0.7,
+        "max_results": 10,
+        "weight_factors": {
+            "design_type": 0.3,
+            "complexity": 0.2,
+            "constraints": 0.2,
+            "success": 0.15,
+            "execution_time": 0.15
+        }
+    },
+    
+    "indexing": {
+        "text_fields": ["features.text", "metadata.design_type", "metadata.constraints"],
+        "numeric_fields": ["metadata.complexity", "optimization_result.execution_time", "optimization_result.wirelength", "optimization_result.area"],
+        "categorical_fields": ["metadata.design_type", "optimization_result.success"],
+        "embedding_fields": ["features.text", "layout.verilog", "layout.def"]
+    },
+    
+    "quality_metrics": {
+        "success_rate": "optimization_result.success",
+        "execution_efficiency": "optimization_result.execution_time",
+        "wirelength_quality": "optimization_result.wirelength",
+        "area_efficiency": "optimization_result.area"
+    },
+    
+    "constraints_mapping": {
+        "timing": ["timing", "clock", "frequency"],
+        "power": ["power", "energy", "consumption"],
+        "area": ["area", "size", "density"],
+        "congestion": ["congestion", "routing", "overflow"]
+    },
+    
+    "design_type_categories": {
+        "DES加密": ["des", "encryption", "crypto"],
+        "FFT变换": ["fft", "fourier", "transform"],
+        "矩阵乘法": ["matrix", "mult", "multiplication"],
+        "PCI桥接": ["pci", "bridge", "interface"],
+        "超大规模设计": ["superblue", "large", "scale"],
+        "编辑距离": ["edit", "distance", "string"]
+    },
+    
+    "logging": {
+        "level": "INFO",
+        "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        "file": "logs/ispd_knowledge_base.log",
+        "max_size": 10485760,
+        "backup_count": 5
+    },
+    
+    "cache": {
+        "enabled": true,
+        "max_size": 1000,
+        "ttl": 3600,
+        "strategy": "lru"
+    },
+    
+    "validation": {
+        "required_fields": ["case_id", "design_name", "optimization_result", "metadata"],
+        "data_quality": {
+            "min_success_rate": 0.8,
+            "max_execution_time": 600,
+            "required_design_types": ["DES加密", "FFT变换", "矩阵乘法", "PCI桥接", "超大规模设计", "编辑距离"]
+        }
+    }
+} 

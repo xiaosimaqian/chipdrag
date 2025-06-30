@@ -61,27 +61,54 @@ class LayoutState:
 
 @dataclass
 class LayoutAction:
-    """布局动作表示"""
-    density_target: float  # 目标密度 (0.7-0.95)
+    """布局动作表示 - 增强版"""
+    density_target: float  # 目标密度 (0.6-0.95)
     wirelength_weight: float  # 线长权重 (0.1-5.0)
     density_weight: float  # 密度权重 (0.1-5.0)
+    overflow_penalty: float  # 溢出惩罚 (0.0001-0.001)
+    max_displacement: float  # 最大位移 (2-20)
     
     def to_array(self) -> np.ndarray:
-        """转换为numpy数组"""
+        """转换为numpy数组 - 归一化到[0,1]"""
         return np.array([
-            self.density_target,
-            self.wirelength_weight,
-            self.density_weight
+            (self.density_target - 0.6) / 0.35,  # 归一化到[0,1]
+            (self.wirelength_weight - 0.1) / 4.9,
+            (self.density_weight - 0.1) / 4.9,
+            (self.overflow_penalty - 0.0001) / 0.0009,
+            (self.max_displacement - 2) / 18
         ], dtype=np.float32)
     
     @classmethod
     def from_array(cls, action_array: np.ndarray) -> 'LayoutAction':
-        """从numpy数组创建动作"""
+        """从numpy数组创建动作 - 反归一化"""
         return cls(
-            density_target=float(action_array[0]),
-            wirelength_weight=float(action_array[1]),
-            density_weight=float(action_array[2])
+            density_target=0.6 + action_array[0] * 0.35,
+            wirelength_weight=0.1 + action_array[1] * 4.9,
+            density_weight=0.1 + action_array[2] * 4.9,
+            overflow_penalty=0.0001 + action_array[3] * 0.0009,
+            max_displacement=2 + action_array[4] * 18
         )
+    
+    @classmethod
+    def random_action(cls) -> 'LayoutAction':
+        """生成随机动作"""
+        return cls(
+            density_target=random.uniform(0.6, 0.95),
+            wirelength_weight=random.uniform(0.1, 5.0),
+            density_weight=random.uniform(0.1, 5.0),
+            overflow_penalty=random.uniform(0.0001, 0.001),
+            max_displacement=random.uniform(2, 20)
+        )
+    
+    def to_dict(self) -> Dict[str, float]:
+        """转换为字典格式"""
+        return {
+            'density_target': self.density_target,
+            'wirelength_weight': self.wirelength_weight,
+            'density_weight': self.density_weight,
+            'overflow_penalty': self.overflow_penalty,
+            'max_displacement': self.max_displacement
+        }
 
 class LayoutEnvironment:
     """布局优化环境"""
@@ -206,40 +233,40 @@ class LayoutEnvironment:
         if not self.use_openroad:
             raise RuntimeError("模拟模式已被禁用，只允许真实OpenROAD训练")
         
-            try:
-                # 使用OpenROAD接口进行初始布局
+        try:
+            # 使用OpenROAD接口进行初始布局
             result = self.openroad_interface.run_placement()
             if result['success']:
                 logger.info("初始布局完成")
             else:
                 raise RuntimeError(f"初始布局失败: {result.get('stderr', '未知错误')}")
-            except Exception as e:
-                logger.error(f"初始布局失败: {e}")
+        except Exception as e:
+            logger.error(f"初始布局失败: {e}")
             raise RuntimeError(f"初始布局失败: {e}")
     
     def _execute_placement_action(self, action: LayoutAction) -> bool:
-        """执行布局动作"""
+        """执行布局动作 - 增强版"""
         if not self.use_openroad:
             raise RuntimeError("模拟模式已被禁用，只允许真实OpenROAD训练")
         
-            try:
+        try:
             # 使用OpenROAD接口执行布局动作
             result = self.openroad_interface.run_placement(
                 density_target=action.density_target,
                 wirelength_weight=action.wirelength_weight,
                 density_weight=action.density_weight
             )
-                
+            
             if result['success']:
-                    logger.info(f"布局动作执行成功: 迭代{self.current_iteration}")
-                    return True
-                else:
+                logger.info(f"布局动作执行成功: 迭代{self.current_iteration}")
+                logger.info(f"参数: {action.to_dict()}")
+                return True
+            else:
                 logger.error(f"布局动作执行失败: {result.get('stderr', '未知错误')}")
-                    return False
-                    
-            except Exception as e:
-                logger.error(f"执行布局动作时出错: {e}")
                 return False
+        except Exception as e:
+            logger.error(f"执行布局动作时出错: {e}")
+            return False
     
     def _generate_placement_tcl(self, action: LayoutAction) -> str:
         """生成布局TCL脚本"""
@@ -316,33 +343,39 @@ exit
         if not self.use_openroad:
             raise RuntimeError("模拟模式已被禁用，只允许真实OpenROAD训练")
         
-            try:
+        try:
             # 使用OpenROAD接口获取当前状态
             result = self.openroad_interface.get_placement_quality({})
-                    
-            # 从结果中提取指标
+            
+            # 从结果中提取指标，确保所有值都是有效的数字
             hpwl = result.get('wirelength', 1000000.0)
             overflow = result.get('overflow', 0.2)
             density = result.get('density', 0.8)
             utilization = result.get('utilization', 0.7)
             
-            # 如果某些指标缺失，使用默认值
-            if hpwl <= 0:
-                    hpwl = 1000000.0
-            if overflow < 0:
-                    overflow = 0.2
-            if density <= 0:
-                    density = 0.8
-            if utilization <= 0:
-                    utilization = 0.7
-                    
-            except Exception as e:
-            logger.error(f"获取布局状态时出错: {e}")
-                # 使用默认值
+            # 确保所有值都是有效的数字，处理None值
+            if hpwl is None or hpwl <= 0:
                 hpwl = 1000000.0
+            if overflow is None or overflow < 0:
                 overflow = 0.2
+            if density is None or density <= 0:
                 density = 0.8
+            if utilization is None or utilization <= 0:
                 utilization = 0.7
+                
+            # 确保所有值都是float类型
+            hpwl = float(hpwl)
+            overflow = float(overflow)
+            density = float(density)
+            utilization = float(utilization)
+            
+        except Exception as e:
+            logger.error(f"获取布局状态时出错: {e}")
+            # 使用默认值
+            hpwl = 1000000.0
+            overflow = 0.2
+            density = 0.8
+            utilization = 0.7
         
         return LayoutState(
             hpwl=hpwl,
@@ -357,26 +390,74 @@ exit
                          prev_state: LayoutState, 
                          curr_state: LayoutState, 
                          action: LayoutAction) -> float:
-        """计算奖励函数"""
-        # 基础奖励：HPWL改善
-        hpwl_improvement = (prev_state.hpwl - curr_state.hpwl) / prev_state.hpwl
-        hpwl_reward = hpwl_improvement * 100.0
+        """计算奖励函数 - 增强版，更好地反映参数对HPWL的影响"""
         
-        # 溢出率惩罚
-        overflow_penalty = -50.0 * curr_state.overflow
+        # 1. HPWL改善奖励（主要奖励）
+        if prev_state.hpwl > 0:
+            hpwl_improvement = (prev_state.hpwl - curr_state.hpwl) / prev_state.hpwl
+            # 使用对数奖励，对小的改善也给予奖励
+            hpwl_reward = np.log(1 + max(0, hpwl_improvement)) * 100.0
+        else:
+            hpwl_reward = 0.0
         
-        # 密度奖励（接近目标密度）
-        density_reward = -10.0 * abs(curr_state.density - action.density_target)
+        # 2. 溢出率惩罚（重要约束）
+        overflow_penalty = -200.0 * curr_state.overflow
         
-        # 利用率奖励
-        utilization_reward = 20.0 * curr_state.utilization
+        # 3. 密度目标奖励（参数有效性）
+        density_target_reward = -50.0 * abs(curr_state.density - action.density_target)
         
-        # 收敛奖励（如果接近目标）
+        # 4. 利用率奖励（资源利用效率）
+        utilization_reward = 30.0 * curr_state.utilization
+        
+        # 5. 参数合理性奖励（鼓励探索有效参数组合）
+        param_reward = 0.0
+        
+        # 线长权重合理性：中等值通常更好
+        if 0.5 <= action.wirelength_weight <= 3.0:
+            param_reward += 10.0
+        
+        # 密度权重合理性：避免极端值
+        if 0.5 <= action.density_weight <= 3.0:
+            param_reward += 10.0
+        
+        # 密度目标合理性：避免过高或过低
+        if 0.7 <= action.density_target <= 0.9:
+            param_reward += 15.0
+        
+        # 6. 收敛奖励（达到目标时的额外奖励）
         convergence_reward = 0.0
         if curr_state.hpwl < self.target_hpwl and curr_state.overflow < self.target_overflow:
-            convergence_reward = 200.0
+            convergence_reward = 500.0
         
-        total_reward = hpwl_reward + overflow_penalty + density_reward + utilization_reward + convergence_reward
+        # 7. 稳定性奖励（避免参数剧烈变化）
+        stability_reward = 0.0
+        if hasattr(self, 'last_action') and self.last_action:
+            # 计算参数变化幅度
+            param_change = np.linalg.norm(
+                np.array(list(action.to_dict().values())) - 
+                np.array(list(self.last_action.to_dict().values()))
+            )
+            stability_reward = -10.0 * param_change  # 参数变化越小越好
+        
+        self.last_action = action
+        
+        # 总奖励
+        total_reward = (hpwl_reward + overflow_penalty + density_target_reward + 
+                       utilization_reward + param_reward + convergence_reward + stability_reward)
+        
+        # 记录奖励分解（用于调试）
+        reward_decomposition = {
+            'hpwl_reward': hpwl_reward,
+            'overflow_penalty': overflow_penalty,
+            'density_target_reward': density_target_reward,
+            'utilization_reward': utilization_reward,
+            'param_reward': param_reward,
+            'convergence_reward': convergence_reward,
+            'stability_reward': stability_reward,
+            'total_reward': total_reward
+        }
+        
+        logger.debug(f"奖励分解: {reward_decomposition}")
         
         return total_reward
     
@@ -406,7 +487,7 @@ class DQNAgent:
     
     def __init__(self, 
                  state_size: int = 5,
-                 action_size: int = 3,
+                 action_size: int = 8,  # 修改为8个离散动作
                  learning_rate: float = 0.001,
                  epsilon: float = 1.0,
                  epsilon_decay: float = 0.995,
@@ -470,11 +551,13 @@ class DQNAgent:
             return self._best_action(state)
     
     def _random_action(self) -> np.ndarray:
-        """生成随机动作"""
+        """生成随机动作 - 返回5维连续动作"""
         return np.array([
-            random.uniform(0.7, 0.95),  # density_target
+            random.uniform(0.6, 0.95),  # density_target
             random.uniform(0.1, 5.0),   # wirelength_weight
-            random.uniform(0.1, 5.0)    # density_weight
+            random.uniform(0.1, 5.0),   # density_weight
+            random.uniform(0.0001, 0.001),  # overflow_penalty
+            random.uniform(2, 20)       # max_displacement
         ])
     
     def _best_action(self, state: np.ndarray) -> np.ndarray:
@@ -489,17 +572,17 @@ class DQNAgent:
         return self._action_index_to_continuous(action_idx)
     
     def _action_index_to_continuous(self, action_idx: int) -> np.ndarray:
-        """将离散动作索引转换为连续动作"""
-        # 预定义的连续动作空间
+        """将离散动作索引转换为连续动作 - 返回5维动作"""
+        # 预定义的连续动作空间 - 5维动作
         action_space = [
-            [0.7, 1.0, 1.0],   # 保守策略
-            [0.8, 2.0, 1.5],   # 平衡策略
-            [0.9, 3.0, 2.0],   # 激进策略
-            [0.75, 4.0, 0.5],  # 线长优先
-            [0.95, 0.5, 4.0],  # 密度优先
-            [0.85, 1.5, 1.5],  # 中等策略
-            [0.8, 2.5, 1.0],   # 线长中等
-            [0.9, 1.0, 3.0],   # 密度中等
+            [0.7, 1.0, 1.0, 0.0005, 5.0],   # 保守策略
+            [0.8, 2.0, 1.5, 0.0003, 8.0],   # 平衡策略
+            [0.9, 3.0, 2.0, 0.0002, 12.0],  # 激进策略
+            [0.75, 4.0, 0.5, 0.0001, 3.0],  # 线长优先
+            [0.95, 0.5, 4.0, 0.0008, 15.0], # 密度优先
+            [0.85, 1.5, 1.5, 0.0004, 10.0], # 中等策略
+            [0.8, 2.5, 1.0, 0.0002, 6.0],   # 线长中等
+            [0.9, 1.0, 3.0, 0.0006, 18.0],  # 密度中等
         ]
         
         if action_idx < len(action_space):
@@ -552,16 +635,16 @@ class DQNAgent:
     
     def _continuous_to_action_index(self, continuous_action: np.ndarray) -> int:
         """将连续动作转换为离散动作索引"""
-        # 预定义的连续动作空间
+        # 预定义的连续动作空间 - 5维动作
         action_space = [
-            [0.7, 1.0, 1.0],   # 保守策略
-            [0.8, 2.0, 1.5],   # 平衡策略
-            [0.9, 3.0, 2.0],   # 激进策略
-            [0.75, 4.0, 0.5],  # 线长优先
-            [0.95, 0.5, 4.0],  # 密度优先
-            [0.85, 1.5, 1.5],  # 中等策略
-            [0.8, 2.5, 1.0],   # 线长中等
-            [0.9, 1.0, 3.0],   # 密度中等
+            [0.7, 1.0, 1.0, 0.0005, 5.0],   # 保守策略
+            [0.8, 2.0, 1.5, 0.0003, 8.0],   # 平衡策略
+            [0.9, 3.0, 2.0, 0.0002, 12.0],  # 激进策略
+            [0.75, 4.0, 0.5, 0.0001, 3.0],  # 线长优先
+            [0.95, 0.5, 4.0, 0.0008, 15.0], # 密度优先
+            [0.85, 1.5, 1.5, 0.0004, 10.0], # 中等策略
+            [0.8, 2.5, 1.0, 0.0002, 6.0],   # 线长中等
+            [0.9, 1.0, 3.0, 0.0006, 18.0],  # 密度中等
         ]
         
         # 找到最接近的动作
@@ -762,7 +845,7 @@ def main():
     # 创建智能体
     agent = DQNAgent(
         state_size=5,
-        action_size=3,
+        action_size=8,
         learning_rate=0.001,
         epsilon=1.0,
         epsilon_decay=0.995,

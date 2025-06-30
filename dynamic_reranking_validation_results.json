@@ -1,0 +1,314 @@
+{
+  "dynamic_k": {
+    "k_values": [
+      3,
+      5,
+      8,
+      10,
+      12,
+      15
+    ],
+    "success_rates": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "execution_times": [
+      0.00015925,
+      0.00016887499999999997,
+      0.0001653125,
+      0.00014,
+      0.00014375000000000002,
+      0.00014162500000000001
+    ],
+    "improvements": [
+      0.06666666666666667,
+      0.06666666666666667,
+      0.06666666666666667,
+      0.06666666666666667,
+      0.06666666666666667,
+      0.06666666666666667
+    ],
+    "real_k_selections": [
+      2.0,
+      2.0,
+      2.0,
+      2.0,
+      2.0,
+      2.0
+    ]
+  },
+  "rl": {
+    "episodes": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21
+    ],
+    "rewards": [
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0,
+      70.0
+    ],
+    "success_rates": [
+      0.9375,
+      0.9385,
+      0.9395,
+      0.9405,
+      0.9415,
+      0.9425,
+      0.9435,
+      0.9445,
+      0.9455,
+      0.9465,
+      0.9475,
+      0.9485,
+      0.9495,
+      0.9505,
+      0.9515,
+      0.9525,
+      0.9535,
+      0.9545,
+      0.9555,
+      0.9565,
+      0.9575,
+      0.9585
+    ],
+    "convergence_episode": 21,
+    "q_table_updates": [
+      5,
+      6,
+      6,
+      6,
+      6,
+      6,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7
+    ],
+    "exploration_rates": [
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1
+    ]
+  },
+  "integration": {
+    "baseline_performance": {
+      "success_rate": 0.9375,
+      "execution_time": 433.40509609878063,
+      "total_designs": 16
+    },
+    "dynamic_reranking_performance": {
+      "success_rate": 1.0,
+      "execution_time": 1.32,
+      "total_designs": 16
+    },
+    "improvements": {
+      "success_rate_improvement": 0.06666666666666667,
+      "execution_time_improvement": 0.9969543505328347,
+      "overall_improvement": 0.5318105085997507
+    },
+    "integration_details": [
+      {
+        "design": "mgc_pci_bridge32_b",
+        "retrieval_count": 2,
+        "avg_relevance": 0.7000000000000001,
+        "quality_score": 0.8400000000000001,
+        "execution_time": 1.3199999999999998,
+        "success": true
+      },
+      {
+        "design": "mgc_fft_a",
+        "retrieval_count": 2,
+        "avg_relevance": 0.7000000000000001,
+        "quality_score": 0.8400000000000001,
+        "execution_time": 1.3199999999999998,
+        "success": true
+      },
+      {
+        "design": "mgc_superblue12",
+        "retrieval_count": 2,
+        "avg_relevance": 0.7000000000000001,
+        "quality_score": 0.8400000000000001,
+        "execution_time": 1.3199999999999998,
+        "success": true
+      },
+      {
+        "design": "mgc_matrix_mult_1",
+        "retrieval_count": 2,
+        "avg_relevance": 0.7000000000000001,
+        "quality_score": 0.8400000000000001,
+        "execution_time": 1.3199999999999998,
+        "success": true
+      },
+      {
+        "design": "mgc_des_perf_1",
+        "retrieval_count": 2,
+        "avg_relevance": 0.7000000000000001,
+        "quality_score": 0.8400000000000001,
+        "execution_time": 1.3199999999999998,
+        "success": true
+      },
+      {
+        "design": "mgc_pci_bridge32_a",
+        "retrieval_count": 2,
+        "avg_relevance": 0.7000000000000001,
+        "quality_score": 0.8400000000000001,
+        "execution_time": 1.3199999999999998,
+        "success": true
+      },
+      {
+        "design": "mgc_fft_b",
+        "retrieval_count": 2,
+        "avg_relevance": 0.7000000000000001,
+        "quality_score": 0.8400000000000001,
+        "execution_time": 1.3199999999999998,
+        "success": true
+      },
+      {
+        "design": "mgc_edit_dist_a",
+        "retrieval_count": 2,
+        "avg_relevance": 0.7000000000000001,
+        "quality_score": 0.8400000000000001,
+        "execution_time": 1.3199999999999998,
+        "success": true
+      },
+      {
+        "design": "mgc_matrix_mult_b",
+        "retrieval_count": 2,
+        "avg_relevance": 0.7000000000000001,
+        "quality_score": 0.8400000000000001,
+        "execution_time": 1.3199999999999998,
+        "success": true
+      },
+      {
+        "design": "mgc_fft_1",
+        "retrieval_count": 2,
+        "avg_relevance": 0.7000000000000001,
+        "quality_score": 0.8400000000000001,
+        "execution_time": 1.3199999999999998,
+        "success": true
+      },
+      {
+        "design": "mgc_des_perf_b",
+        "retrieval_count": 2,
+        "avg_relevance": 0.7000000000000001,
+        "quality_score": 0.8400000000000001,
+        "execution_time": 1.3199999999999998,
+        "success": true
+      },
+      {
+        "design": "mgc_superblue11_a",
+        "retrieval_count": 2,
+        "avg_relevance": 0.7000000000000001,
+        "quality_score": 0.8400000000000001,
+        "execution_time": 1.3199999999999998,
+        "success": true
+      },
+      {
+        "design": "mgc_des_perf_a",
+        "retrieval_count": 2,
+        "avg_relevance": 0.7000000000000001,
+        "quality_score": 0.8400000000000001,
+        "execution_time": 1.3199999999999998,
+        "success": true
+      },
+      {
+        "design": "mgc_fft_2",
+        "retrieval_count": 2,
+        "avg_relevance": 0.7000000000000001,
+        "quality_score": 0.8400000000000001,
+        "execution_time": 1.3199999999999998,
+        "success": true
+      },
+      {
+        "design": "mgc_matrix_mult_a",
+        "retrieval_count": 2,
+        "avg_relevance": 0.7000000000000001,
+        "quality_score": 0.8400000000000001,
+        "execution_time": 1.3199999999999998,
+        "success": true
+      },
+      {
+        "design": "mgc_superblue16_a",
+        "retrieval_count": 2,
+        "avg_relevance": 0.7000000000000001,
+        "quality_score": 0.8400000000000001,
+        "execution_time": 1.3199999999999998,
+        "success": true
+      }
+    ]
+  }
+}

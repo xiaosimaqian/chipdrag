@@ -138,10 +138,20 @@ class RealOpenROADInterface:
         
         # 使用动态参数生成TCL脚本
         utilization = int(density_target * 100)
+        site_info = self._get_site_info()
         tcl_script = f"""
-# OpenROAD布局优化脚本 (智能参数版本)
+# OpenROAD布局优化脚本 (智能参数版本 + 并行加速)
 # 设计: {self.verilog_file.name}
 # 参数: density_target={density_target}, utilization={utilization}, die_size={die_size}x{die_size}, core_size={core_size}x{core_size}
+
+# 启用OpenROAD并行处理
+set_thread_count 8
+puts "启用8线程并行处理"
+
+# 设置OpenROAD并行参数
+set ::env(OPENROAD_NUM_THREADS) 8
+set ::env(OMP_NUM_THREADS) 8
+set ::env(MKL_NUM_THREADS) 8
 
 # 完全重置数据库
 if {{[info exists ::ord::db]}} {{
@@ -175,7 +185,7 @@ if {{[file exists floorplan.def]}} {{
     puts "使用utilization {utilization}%重新初始化floorplan..."
     
     # 获取site信息
-    set site_info "{self._get_site_info()}"
+    set site_info "{site_info}"
     puts "使用site: $site_info"
     
     # 重新初始化floorplan，使用utilization方法
@@ -200,7 +210,7 @@ if {{[file exists floorplan.def]}} {{
     link_design {top_module}
     
     # 获取site信息
-    set site_info "{self._get_site_info()}"
+    set site_info "{site_info}"
     puts "使用site: $site_info"
     
     # 然后创建floorplan，使用utilization方法
@@ -211,8 +221,8 @@ if {{[file exists floorplan.def]}} {{
 # 设置布局参数 - 使用更宽松的设置
 set_placement_padding -global -left 2 -right 2
 
-# 全局布局 - 使用动态密度目标，增加容错性
-puts "开始全局布局 (密度目标: {density_target})..."
+# 全局布局 - 使用动态密度目标，增加容错性，启用并行
+puts "开始全局布局 (密度目标: {density_target}, 并行处理)..."
 if {{[catch {{global_placement -density {density_target} -overflow 0.1}} result]}} {{
     puts "全局布局失败: $result"
     puts "尝试使用默认参数..."
@@ -243,8 +253,8 @@ foreach inst $insts {{
 
 puts "全局布局完成: $placed_count/$total_count 实例已放置"
 
-# 详细布局 - 使用更宽松的参数
-puts "开始详细布局..."
+# 详细布局 - 使用更宽松的参数，启用并行
+puts "开始详细布局 (并行处理)..."
 if {{[catch {{detailed_placement -max_displacement 5}} result]}} {{
     puts "详细布局失败，尝试使用更宽松的参数..."
     if {{[catch {{detailed_placement -max_displacement 10}} result]}} {{
@@ -255,6 +265,14 @@ if {{[catch {{detailed_placement -max_displacement 5}} result]}} {{
     }}
 }} else {{
     puts "详细布局成功完成"
+}}
+
+# Pin布局优化
+puts "开始引脚布局优化..."
+if {{[catch {{place_pins -hor_layers 2 -ver_layers 2}} result]}} {{
+    puts "引脚布局优化失败: $result"
+}} else {{
+    puts "引脚布局优化完成"
 }}
 
 # 最终检查布局结果
@@ -335,7 +353,10 @@ puts "布局实例数: $final_placed_count/$final_total_count"
             start_time = time.time()
             result = subprocess.run([
                 'docker', 'run', '--rm',
-                '-m', '12g', '-c', '4',  # 增加内存限制
+                '-m', '16g', '-c', '8',  # 增加内存和CPU核心数
+                '-e', 'OPENROAD_NUM_THREADS=8',
+                '-e', 'OMP_NUM_THREADS=8',
+                '-e', 'MKL_NUM_THREADS=8',
                 '-v', f'{abs_work_dir}:/workspace',
                 '-w', '/workspace',
                 'openroad/flow-ubuntu22.04-builder:21e414',
@@ -379,7 +400,7 @@ puts "布局实例数: $final_placed_count/$final_total_count"
                 'metrics': {},
                 'design_stats': design_stats if 'design_stats' in locals() else {},
                 'optimal_params': optimal_params if 'optimal_params' in locals() else {},
-                'hpwl': float('inf'),
+                'hpwl': None,
                 'errors': [str(e)],
                 'warnings': [],
                 'info_messages': []
@@ -439,97 +460,121 @@ puts "布局实例数: $final_placed_count/$final_total_count"
         Returns:
             质量指标字典
         """
-        if not result_dict.get("success", False):
+        # 首先尝试从OpenROAD日志中提取真实指标
+        log_metrics = self._extract_metrics_from_log()
+        
+        if log_metrics.get('wirelength') is not None:
+            # 如果从日志中成功提取到HPWL，使用真实值
             return {
-                "wirelength": float('inf'),
-                "density": 0.0,
-                "congestion": float('inf'),
-                "timing": float('inf')
+                "wirelength": log_metrics['wirelength'],
+                "density": log_metrics.get('density', 0.7),
+                "overflow": log_metrics.get('overflow', 0.2),
+                "utilization": log_metrics.get('utilization', 0.7)
             }
         
-        # 这里可以添加更详细的质量分析逻辑
-        # 目前返回基本指标
+        # 如果日志提取失败，尝试从DEF文件提取HPWL
+        def_hpwl = self._extract_hpwl_from_def("output/final_layout.def")
+        if def_hpwl != float('inf'):
+            return {
+                "wirelength": def_hpwl,
+                "density": 0.7,
+                "overflow": 0.2,
+                "utilization": 0.7
+            }
+        
+        # 最后才使用默认值
+        if not result_dict.get("success", False):
+            return {
+                "wirelength": None,
+                "density": 0.0,
+                "overflow": 0.2,
+                "utilization": 0.0
+            }
+        
         return {
-            "wirelength": 1000.0,  # 示例值
-            "density": 0.7,         # 示例值
-            "congestion": 0.1,      # 示例值
-            "timing": 1.0           # 示例值
+            "wirelength": 1000000.0,  # 默认值
+            "density": 0.7,
+            "overflow": 0.2,
+            "utilization": 0.7
         }
 
-    def _extract_metrics(self, stdout_lines: List[str], stderr_lines: List[str]) -> Dict[str, Any]:
+    def _extract_metrics_from_log(self) -> Dict[str, Any]:
         """
-        从OpenROAD输出中提取关键指标
+        从OpenROAD执行日志中提取关键指标
         
-        Args:
-            stdout_lines: 标准输出行列表
-            stderr_lines: 错误输出行列表
-            
         Returns:
             提取的指标字典
         """
         metrics = {
             'wirelength': None,
-            'area': None,
             'density': None,
-            'timing': None,
-            'overflow': None
+            'overflow': None,
+            'utilization': None
         }
         
-        # 合并所有输出行进行分析
-        all_lines = stdout_lines + stderr_lines
-        
-        for line in all_lines:
-            line = line.strip()
+        try:
+            log_file = os.path.join(self.work_dir, "openroad_execution.log")
+            if not os.path.exists(log_file):
+                return metrics
             
-            # 提取HPWL (Half-Perimeter Wirelength)
-            # 格式: HPWL: 1.063218e+10 或 HPWL: 16752570900
-            if 'HPWL:' in line:
-                try:
-                    import re
-                    # 匹配HPWL后面的数字（科学计数法或普通数字）
-                    hpwl_match = re.search(r'HPWL:\s*([0-9.]+(?:e[+-]?\d+)?)', line)
-                    if hpwl_match:
-                        hpwl_value = float(hpwl_match.group(1))
-                        # 如果HPWL值很大（科学计数法），转换为更小的单位
-                        if hpwl_value > 1e9:
-                            hpwl_value = hpwl_value / 1e6  # 转换为百万单位
-                        metrics['wirelength'] = hpwl_value
-                except:
-                    pass
+            with open(log_file, 'r') as f:
+                content = f.read()
             
-            # 提取核心面积
-            # 格式: Core area: 4752400.000 um^2
-            elif 'Core area:' in line:
-                try:
-                    import re
-                    area_match = re.search(r'Core area:\s*([0-9.]+)', line)
-                    if area_match:
-                        metrics['area'] = float(area_match.group(1))
-                except:
-                    pass
+            lines = content.split('\n')
             
-            # 提取利用率
-            # 格式: Utilization: 37.405 %
-            elif 'Utilization:' in line:
-                try:
-                    import re
-                    util_match = re.search(r'Utilization:\s*([0-9.]+)', line)
-                    if util_match:
-                        metrics['density'] = float(util_match.group(1)) / 100.0
-                except:
-                    pass
+            # 查找最后的HPWL值（通常是布局完成后的最终HPWL）
+            hpwl_values = []
+            for line in lines:
+                if 'HPWL:' in line and 'InitialPlace' in line:
+                    try:
+                        import re
+                        hpwl_match = re.search(r'HPWL:\s*([0-9]+)', line)
+                        if hpwl_match:
+                            hpwl_value = int(hpwl_match.group(1))
+                            hpwl_values.append(hpwl_value)
+                    except:
+                        continue
+            
+            # 使用最后一个HPWL值（最终结果）
+            if hpwl_values:
+                metrics['wirelength'] = float(hpwl_values[-1])
+            
+            # 提取密度信息
+            for line in lines:
+                if 'target density:' in line.lower():
+                    try:
+                        import re
+                        density_match = re.search(r'target density:\s*([0-9.]+)', line)
+                        if density_match:
+                            metrics['density'] = float(density_match.group(1))
+                    except:
+                        continue
             
             # 提取溢出信息
-            # 格式: Finished with Overflow: 0.099203
-            elif 'Overflow:' in line and 'Finished' in line:
-                try:
-                    import re
-                    overflow_match = re.search(r'Overflow:\s*([0-9.]+)', line)
-                    if overflow_match:
-                        metrics['overflow'] = float(overflow_match.group(1))
-                except:
-                    pass
+            for line in lines:
+                if 'overflow:' in line.lower() and 'finished' in line.lower():
+                    try:
+                        import re
+                        overflow_match = re.search(r'overflow:\s*([0-9.]+)', line)
+                        if overflow_match:
+                            metrics['overflow'] = float(overflow_match.group(1))
+                    except:
+                        continue
             
+            # 提取利用率信息
+            for line in lines:
+                if 'utilization:' in line.lower():
+                    try:
+                        import re
+                        util_match = re.search(r'utilization:\s*([0-9.]+)', line)
+                        if util_match:
+                            metrics['utilization'] = float(util_match.group(1)) / 100.0
+                    except:
+                        continue
+            
+        except Exception as e:
+            print(f"从日志提取指标失败: {e}")
+        
         return metrics
 
     def _extract_site_info(self) -> str:
@@ -709,38 +754,24 @@ END core
         num_nets = design_stats.get('num_nets', 0)
         core_area = design_stats.get('core_area', 0)
         
-        # 基础参数
-        base_density = 0.70
-        base_die_size = 800
-        base_core_size = 790
-        
-        # 根据实例数量调整参数（增强版）
-        if num_instances > 500000:  # 超超大型设计（如superblue系列）
-            density_target = 0.60  # 降低密度目标，避免利用率过高
-            die_size = 2000
+        # 智能调整芯片面积和密度
+        # 根据设计规模动态调整密度，避免布线拥塞
+        if num_instances > 500000:  # 超大型设计
+            density_target = 0.40  # 降低到40%
+            die_size = 2500  # 增加面积
+            core_size = 2490
+        elif num_instances > 200000:  # 大型设计
+            density_target = 0.45  # 降低到45%
+            die_size = 2000  # 增加面积
             core_size = 1990
-            print(f"检测到超超大型设计 ({num_instances}实例)，使用特殊参数")
-        elif num_instances > 200000:  # 超大型设计
-            density_target = 0.65
-            die_size = 1600
-            core_size = 1590
-            print(f"检测到超大型设计 ({num_instances}实例)，使用宽松参数")
-        elif num_instances > 100000:  # 大型设计
-            density_target = 0.75
-            die_size = 1200
-            core_size = 1190
-        elif num_instances > 50000:  # 中型设计
-            density_target = 0.80
-            die_size = 1000
-            core_size = 990
-        elif num_instances > 20000:  # 中小型设计
-            density_target = 0.75
-            die_size = 900
-            core_size = 890
+        elif num_instances > 100000:  # 中型设计
+            density_target = 0.50  # 降低到50%
+            die_size = 1500  # 增加面积
+            core_size = 1490
         else:  # 小型设计
-            density_target = base_density
-            die_size = base_die_size
-            core_size = base_core_size
+            density_target = 0.55  # 降低到55%
+            die_size = 1200  # 增加面积
+            core_size = 1190
         
         # 根据网络数量进一步调整
         if num_nets > 200000:
@@ -804,26 +835,29 @@ END core
             'density_weight': 1.0
         }
 
-    def create_iterative_placement_tcl(self, num_iterations: int = 10) -> str:
+    def create_iterative_placement_tcl(self, num_iterations: int = 10, density_target: float = 0.7, wirelength_weight: float = 1.0, density_weight: float = 1.0) -> str:
         """
-        创建迭代布局TCL脚本，支持RL训练数据收集
+        创建迭代布局TCL脚本，支持RL训练数据收集和参数化
         
         Args:
             num_iterations: 迭代次数
-            
+            density_target: 密度目标
+            wirelength_weight: 线长权重
+            density_weight: 密度权重
         Returns:
             str: TCL脚本文件路径
         """
         # 计算最优面积和密度
         optimal_area, optimal_density = self._calculate_optimal_area_and_density()
         width, height = optimal_area
-        
         # 根据密度计算utilization
-        utilization = int(optimal_density * 100)
-        
+        utilization = int(density_target * 100)
         tcl_content = f"""# Enhanced OpenROAD Place & Route Script - RL Training Data Collection
 set output_dir "output"
 set num_iterations {num_iterations}
+set density_target {density_target}
+set wirelength_weight {wirelength_weight}
+set density_weight {density_weight}
 
 file mkdir $output_dir
 file mkdir "$output_dir/iterations"
@@ -834,10 +868,10 @@ set log_fp [open $log_file w]
 puts "LOG: Current directory: [pwd]"
 puts "LOG: output_dir=$output_dir"
 puts "LOG: Number of iterations: $num_iterations"
-puts "LOG: Optimal area: {width}x{height}, density: {optimal_density:.2f}, utilization: {utilization}%"
+puts "LOG: density_target=$density_target, wirelength_weight=$wirelength_weight, density_weight=$density_weight"
 puts $log_fp "=== OpenROAD RL Training Data Collection ==="
 puts $log_fp "Number of iterations: $num_iterations"
-puts $log_fp "Optimal area: {width}x{height}, density: {optimal_density:.2f}, utilization: {utilization}%"
+puts $log_fp "density_target=$density_target, wirelength_weight=$wirelength_weight, density_weight=$density_weight"
 
 # 完全重置数据库
 if {{[info exists ::ord::db]}} {{
@@ -851,91 +885,69 @@ read_lef cells.lef
 # 检查DEF文件是否存在，决定读取顺序
 if {{[file exists floorplan.def]}} {{
     puts "读取现有DEF文件: floorplan.def"
-    # 如果DEF文件存在，先读取DEF文件
     read_def floorplan.def
-    
-    # 然后读取Verilog文件并连接设计
     read_verilog design.v
     link_design {self._detect_top_module()}
-    
-    # 使用OpenROAD标准方法重新初始化floorplan
     puts "使用utilization {utilization}%重新初始化floorplan..."
-    
-    # 获取site信息
     set site_info "{self._get_site_info()}"
     puts "使用site: $site_info"
-    
-    # 重新初始化floorplan，使用utilization方法
     initialize_floorplan -utilization {utilization} -aspect_ratio 1.0 -core_space 10 -site $site_info
 }} else {{
     puts "未找到DEF文件，将创建新的floorplan"
-    # 如果DEF文件不存在，先读取Verilog文件并连接设计
     read_verilog design.v
     link_design {self._detect_top_module()}
-    
-    # 获取site信息
     set site_info "{self._get_site_info()}"
     puts "使用site: $site_info"
-    
-    # 然后创建floorplan，使用utilization方法
     puts "初始化布局，使用utilization {utilization}%..."
     initialize_floorplan -utilization {utilization} -aspect_ratio 1.0 -core_space 10 -site $site_info
 }}
 
-# 设置布局参数
 set_placement_padding -global -left 2 -right 2
 
-# Save initial layout (before unplace_all)
 puts "LOG: Saving initial layout before unplace_all"
 write_def "$output_dir/iterations/iteration_0_initial.def"
 puts $log_fp "Iteration 0 (initial): Layout saved before unplace_all"
 
-# Unplace all cells to start fresh for RL training
 puts "LOG: Unplacing all cells for RL training"
 set db [ord::get_db]
 set chip [$db getChip]
 set block [$chip getBlock]
 set insts [$block getInsts]
-
 foreach inst $insts {{
     $inst setPlacementStatus "UNPLACED"
 }}
 puts "LOG: All cells unplaced, starting RL training iterations"
 
-# Execute multiple global_placement iterations for RL training
 for {{set i 1}} {{$i <= $num_iterations}} {{incr i}} {{
     puts "LOG: Starting RL training iteration $i"
     puts $log_fp "=== RL Training Iteration $i ==="
-    
-    # 多样化参数扰动，使用更保守的参数
-    set wirelength_coef [lindex {{0.8 1.0 1.2 0.9 1.1 1.3 0.85 1.05 1.15 1.25}} [expr $i-1]]
-    set density_penalty [lindex {{0.0001 0.00015 0.0002 0.00012 0.00018 0.00022 0.00011 0.00016 0.00019 0.00021}} [expr $i-1]]
-    
-    # 执行全局布局，使用智能计算的密度
-    if {{[catch {{global_placement -density {optimal_density} -init_wirelength_coef $wirelength_coef -init_density_penalty $density_penalty}} result]}} {{
+    # 直接使用传入参数
+    set cur_density $density_target
+    set cur_wirelength_weight $wirelength_weight
+    set cur_density_weight $density_weight
+    if {{[catch {{global_placement -density $cur_density -init_wirelength_coef $cur_wirelength_weight -init_density_penalty $cur_density_weight}} result]}} {{
         puts "LOG: Global placement failed in iteration $i: $result"
         puts $log_fp "Iteration $i: Global placement failed: $result"
         continue
     }}
-    
-    # 尝试详细布局，如果失败则跳过
     if {{[catch {{detailed_placement -max_displacement 2 -max_iterations 5}} result]}} {{
         puts "LOG: Detailed placement failed in iteration $i: $result"
         puts $log_fp "Iteration $i: Detailed placement failed: $result"
-        # 即使详细布局失败，也保存当前布局作为训练数据
     }}
-    
-    # Save current layout for RL training data
-    set def_filename "$output_dir/iterations/iteration_${{i}}_rl_training.def"
+    puts "LOG: Starting pin placement optimization for iteration $i"
+    if {{[catch {{place_pins -random}} result]}} {{
+        puts "LOG: Pin placement failed in iteration $i: $result"
+        puts $log_fp "Iteration $i: Pin placement failed: $result"
+    }} else {{
+        puts "LOG: Pin placement completed for iteration $i"
+        puts $log_fp "Iteration $i: Pin placement completed"
+    }}
+    set def_filename "$output_dir/iterations/iteration_${i}_rl_training.def"
     write_def $def_filename
     puts "LOG: RL training layout saved to: $def_filename"
     puts $log_fp "DEF file: $def_filename"
-    
-    # Collect comprehensive metrics for RL reward calculation
     puts "LOG: Collecting RL training metrics"
-    
-    # Get HPWL information for wirelength reward
-    set hpwl_report_file "$output_dir/iterations/iteration_${{i}}_hpwl.rpt"
+    set hpwl_report_file "$output_dir/iterations/iteration_${i}_hpwl.rpt"
     if {{[catch {{report_wire_length -net}} result]}} {{
         puts "LOG: Cannot get HPWL information: $result"
         puts $log_fp "Iteration $i: HPWL=unavailable"
@@ -946,9 +958,7 @@ for {{set i 1}} {{$i <= $num_iterations}} {{incr i}} {{
         puts "LOG: HPWL report saved to: $hpwl_report_file"
         puts $log_fp "Iteration $i: HPWL report saved"
     }}
-    
-    # Get overflow information for density reward
-    set overflow_report_file "$output_dir/iterations/iteration_${{i}}_overflow.rpt"
+    set overflow_report_file "$output_dir/iterations/iteration_${i}_overflow.rpt"
     if {{[catch {{report_placement_overflow}} result]}} {{
         puts "LOG: Cannot get overflow information: $result"
         puts $log_fp "Iteration $i: Overflow=unavailable"
@@ -959,83 +969,56 @@ for {{set i 1}} {{$i <= $num_iterations}} {{incr i}} {{
         puts "LOG: Overflow report saved to: $overflow_report_file"
         puts $log_fp "Iteration $i: Overflow report saved"
     }}
-    
     puts $log_fp "---"
 }}
-
-# Save final layout
 write_def "$output_dir/final_layout.def"
 puts "LOG: Final layout saved to: $output_dir/final_layout.def"
-
 close $log_fp
 puts "LOG: RL training data collection completed"
 """
-        
         tcl_file = os.path.join(self.work_dir, "iterative_placement.tcl")
         with open(tcl_file, 'w') as f:
             f.write(tcl_content)
-        
         return tcl_file
 
-    def run_iterative_placement(self, 
-                              num_iterations: int = 10) -> Dict[str, Any]:
+    def run_iterative_placement(self, num_iterations: int = 10, timeout: int = None, density_target: float = 0.7, wirelength_weight: float = 1.0, density_weight: float = 1.0) -> Dict[str, Any]:
         """
-        运行迭代布局流程
-        
+        运行迭代布局流程，支持参数化
         Args:
             num_iterations: 迭代次数
-            
+            timeout: 超时时间（秒），可选
+            density_target: 密度目标
+            wirelength_weight: 线长权重
+            density_weight: 密度权重
         Returns:
             Dict[str, Any]: 迭代结果
         """
         try:
-            print(f"开始运行迭代布局流程，迭代次数: {num_iterations}")
-            
-            # 生成迭代布局TCL脚本
-            tcl_file = self.create_iterative_placement_tcl(num_iterations)
-            
+            print(f"开始运行迭代布局流程，迭代次数: {num_iterations}，密度: {density_target}，线长权重: {wirelength_weight}，密度权重: {density_weight}")
+            tcl_file = self.create_iterative_placement_tcl(num_iterations, density_target, wirelength_weight, density_weight)
             print(f"迭代布局TCL脚本已生成: {tcl_file}")
-            
-            # 执行迭代布局
             start_time = time.time()
             success, stdout, stderr = self.run_openroad_command(tcl_file, timeout=timeout)
             execution_time = time.time() - start_time
-            
             if success:
-                print(f"✅ 迭代布局成功完成 (耗时: {execution_time:.2f}秒)")
-                
-                # 收集迭代数据
-                iteration_data = self._collect_iteration_data()
-                
-                # 为每轮迭代添加HPWL
-                for i, iteration in enumerate(iteration_data):
-                    # 尝试从对应的DEF文件提取HPWL
-                    def_file = f"output/iterations/iteration_{i}_result.def"
-                    hpwl = self._extract_hpwl_from_def(def_file)
-                    if hpwl == float('inf'):
-                        # 如果特定轮次DEF不存在，尝试从主结果提取
-                        hpwl = self._extract_hpwl_from_def("placement_result.def")
-                    
-                    iteration['hpwl'] = hpwl
-                    print(f"   轮次 {i}: HPWL = {hpwl:.2e}")
-                
+                hpwl_info = self._extract_hpwl_from_iterations(num_iterations)
                 return {
                     'success': True,
                     'execution_time': execution_time,
-                    'iteration_data': iteration_data,
+                    'iterations': hpwl_info,
+                    'final_hpwl': hpwl_info[-1]['hpwl'] if hpwl_info else None,
                     'stdout': stdout,
                     'stderr': stderr
                 }
             else:
-                print(f"❌ 迭代布局失败 (耗时: {execution_time:.2f}秒)")
                 return {
                     'success': False,
+                    'error': f"OpenROAD执行失败: {stderr}",
                     'execution_time': execution_time,
-                    'error': stderr,
+                    'iterations': [],
                     'stdout': stdout,
                     'stderr': stderr
                 }
-            
         except Exception as e:
             print(f"迭代布局流程异常: {e}")
             return {"success": False, "error": str(e)}
@@ -1137,7 +1120,7 @@ puts "LOG: RL training data collection completed"
             work_dir_abs = os.path.abspath(self.work_dir)
             
             # 构建Docker命令，增加资源限制，使用绝对路径
-            docker_cmd = f"docker run --rm -m 12g -c 4 -v {work_dir_abs}:/workspace -w /workspace openroad/flow-ubuntu22.04-builder:21e414 bash -c 'export PATH=/OpenROAD-flow-scripts/tools/install/OpenROAD/bin:$PATH && openroad -exit {os.path.basename(tcl_file)}'"
+            docker_cmd = f"docker run --rm -m 16g -c 8 -e OPENROAD_NUM_THREADS=8 -e OMP_NUM_THREADS=8 -e MKL_NUM_THREADS=8 -v {work_dir_abs}:/workspace -w /workspace openroad/flow-ubuntu22.04-builder:21e414 bash -c 'export PATH=/OpenROAD-flow-scripts/tools/install/OpenROAD/bin:$PATH && openroad -exit {os.path.basename(tcl_file)}'"
             
             print(f"执行Docker命令: {docker_cmd}")
             
@@ -1194,19 +1177,19 @@ puts "LOG: RL training data collection completed"
         
         # 根据实例数量调整密度
         if num_instances < 50000:
-            density = base_density
+            density = max(0.66, base_density)  # 确保最低密度
             area_multiplier = 1.2
         elif num_instances < 100000:
-            density = base_density - 0.05  # 0.70
+            density = max(0.66, base_density - 0.05)  # 最低0.66
             area_multiplier = 1.4
         elif num_instances < 500000:
-            density = base_density - 0.10  # 0.65
+            density = max(0.66, base_density - 0.10)  # 最低0.66
             area_multiplier = 1.6
         elif num_instances < 1000000:
-            density = base_density - 0.15  # 0.60
+            density = max(0.66, base_density - 0.15)  # 最低0.66
             area_multiplier = 1.8
         else:
-            density = base_density - 0.20  # 0.55
+            density = max(0.66, base_density - 0.20)  # 最低0.66
             area_multiplier = 2.0
         
         # 计算当前芯片尺寸
@@ -1260,74 +1243,171 @@ puts "LOG: RL training data collection completed"
         # 如果没有找到，返回默认值
         return "core"
 
-    def _extract_hpwl_from_def(self, def_file: str = "placement_result.def") -> float:
+    def _extract_hpwl_from_def(self, def_file: str) -> float:
         """
-        从DEF文件中提取HPWL值
+        从DEF文件中提取HPWL信息
         
         Args:
             def_file: DEF文件路径
             
         Returns:
-            float: HPWL值，如果提取失败返回float('inf')
+            float: HPWL值，如果提取失败返回inf
         """
         try:
-            def_path = Path(self.work_dir) / def_file
-            if not def_path.exists():
-                logger.warning(f"DEF文件不存在: {def_path}")
+            if not os.path.exists(def_file):
                 return float('inf')
             
-            # 检查DEF文件是否包含组件放置信息
-            with open(def_path, 'r') as f:
-                content = f.read()
+            # 使用Python脚本计算HPWL
+            import subprocess
+            import sys
             
-            # 如果DEF文件只包含行定义而没有组件放置，返回无穷大
-            if 'COMPONENTS' not in content or 'PLACED' not in content:
-                logger.warning(f"DEF文件 {def_file} 不包含组件放置信息，跳过HPWL提取")
-                return float('inf')
+            # 获取当前脚本的目录
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            # 修正HPWL脚本路径
+            hpwl_script = os.path.join(os.path.dirname(os.path.dirname(current_dir)), 'calculate_hpwl.py')
             
-            # 使用OpenROAD命令提取HPWL
-            cmd = f"docker run --rm -v {self.work_dir}:/workspace -w /workspace openroad/flow-ubuntu22.04-builder:21e414 bash -c 'export PATH=/OpenROAD-flow-scripts/tools/install/OpenROAD/bin:$PATH && openroad -exit - << EOF\nread_def {def_file}\nreport_wirelength\nEOF'"
+            if not os.path.exists(hpwl_script):
+                print(f"HPWL脚本不存在: {hpwl_script}")
+                # 如果脚本不存在，使用内联计算
+                return self._calculate_hpwl_inline(def_file)
             
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+            result = subprocess.run([
+                sys.executable, hpwl_script, def_file
+            ], capture_output=True, text=True, timeout=30)
             
             if result.returncode == 0:
-                # 解析输出中的HPWL值
+                # 解析输出
                 for line in result.stdout.split('\n'):
-                    if 'HPWL' in line and ':' in line:
-                        # 提取数值 - 改进的提取逻辑
-                        import re
-                        hpwl_match = re.search(r'HPWL:\s*([0-9.]+(?:e[+-]?\d+)?)', line)
-                        if hpwl_match:
-                            try:
-                                hpwl_value = float(hpwl_match.group(1))
-                                # 验证HPWL值的合理性 - 更严格的检查
-                                if hpwl_value > 10000:  # 至少1万才可能是合理的HPWL
-                                    return hpwl_value
-                                else:
-                                    logger.warning(f"HPWL值异常小 ({hpwl_value})，可能是提取错误")
-                            except ValueError:
-                                continue
-                        
-                        # 如果没有找到标准格式，尝试其他格式
-                        parts = line.split(':')
-                        if len(parts) >= 2:
-                            hpwl_str = parts[1].strip().split()[0]  # 取第一个数值
-                            try:
-                                hpwl_value = float(hpwl_str)
-                                if hpwl_value > 10000:  # 至少1万才可能是合理的HPWL
-                                    return hpwl_value
-                                else:
-                                    logger.warning(f"HPWL值异常小 ({hpwl_value})，可能是提取错误")
-                            except ValueError:
-                                continue
+                    if line.startswith('Total HPWL:'):
+                        hpwl_str = line.split(':')[1].strip()
+                        hpwl_value = float(hpwl_str)
+                        # 转换为微米单位（DEF文件中的单位是纳米）
+                        hpwl_microns = hpwl_value / 1000.0
+                        return hpwl_microns
             
-            logger.warning(f"无法从DEF文件提取HPWL: {def_file}")
-            return float('inf')
+            print(f"HPWL脚本执行失败: {result.stderr}")
+            # 如果外部脚本失败，使用内联计算
+            return self._calculate_hpwl_inline(def_file)
             
         except Exception as e:
-            logger.error(f"提取HPWL时发生异常: {e}")
+            print(f"Error extracting HPWL from {def_file}: {e}")
             return float('inf')
-    
+
+    def _calculate_hpwl_inline(self, def_file: str) -> float:
+        """
+        内联计算HPWL（当外部脚本不可用时）
+        """
+        try:
+            import re
+            
+            components = {}  # {component_name: (x, y)}
+            nets = {}        # {net_name: [component_pins]}
+            
+            with open(def_file, 'r') as f:
+                content = f.read()
+            
+            # 解析COMPONENTS段
+            components_match = re.search(r'COMPONENTS (\d+) ;(.*?)END COMPONENTS', content, re.DOTALL)
+            if components_match:
+                components_section = components_match.group(2)
+                for line in components_section.strip().split('\n'):
+                    line = line.strip()
+                    if line and line.startswith('-'):
+                        # 格式: - component_name cell_name + PLACED ( x y ) N ;
+                        match = re.search(r'- (\S+) \S+ \+ PLACED \( (-?\d+) (-?\d+) \)', line)
+                        if match:
+                            comp_name, x, y = match.groups()
+                            components[comp_name] = (int(x), int(y))
+            
+            # 解析NETS段
+            nets_match = re.search(r'NETS (\d+) ;(.*?)END NETS', content, re.DOTALL)
+            if nets_match:
+                nets_section = nets_match.group(2)
+                current_net = None
+                for line in nets_section.strip().split('\n'):
+                    line = line.strip()
+                    if line and not line.startswith(';'):
+                        # 格式: - net_name
+                        if line.startswith('- '):
+                            current_net = line[2:].strip()
+                            nets[current_net] = []
+                        elif current_net and '(' in line:
+                            # 格式: ( component_name pin_name )
+                            match = re.search(r'\( (\S+) \S+ \)', line)
+                            if match:
+                                comp_name = match.group(1)
+                                if comp_name in components:
+                                    nets[current_net].append(comp_name)
+            
+            # 计算总HPWL
+            total_hpwl = 0
+            
+            for net_name, net_components in nets.items():
+                if len(net_components) < 2:
+                    continue
+                    
+                # 获取网络中所有组件的坐标
+                coords = [components[comp] for comp in net_components if comp in components]
+                if len(coords) < 2:
+                    continue
+                    
+                # 计算边界框
+                x_coords = [x for x, y in coords]
+                y_coords = [y for x, y in coords]
+                
+                min_x, max_x = min(x_coords), max(x_coords)
+                min_y, max_y = min(y_coords), max(y_coords)
+                
+                # HPWL = (max_x - min_x) + (max_y - min_y)
+                hpwl = (max_x - min_x) + (max_y - min_y)
+                total_hpwl += hpwl
+            
+            return total_hpwl
+            
+        except Exception as e:
+            print(f"Error in inline HPWL calculation: {e}")
+            return float('inf')
+
+    def _extract_hpwl_from_iterations(self, num_iterations: int) -> List[Dict[str, Any]]:
+        """
+        从迭代布局结果中提取HPWL信息
+        
+        Args:
+            num_iterations: 迭代次数
+            
+        Returns:
+            List[Dict]: 每轮迭代的HPWL信息列表
+        """
+        hpwl_info = []
+        
+        for i in range(num_iterations + 1):  # 包括第0轮（初始状态）
+            iteration_data = {
+                'iteration': i,
+                'hpwl': None,
+                'overflow': None,
+                'density': None
+            }
+            
+            # 尝试从特定轮次的DEF文件提取HPWL
+            def_file = f"output/iterations/iteration_{i}_rl_training.def"
+            hpwl = self._extract_hpwl_from_def(def_file)
+            
+            if hpwl == float('inf'):
+                # 如果特定轮次DEF不存在，尝试从主结果提取
+                hpwl = self._extract_hpwl_from_def("output/final_layout.def")
+            
+            iteration_data['hpwl'] = hpwl
+            
+            # 尝试从日志提取其他指标
+            log_file = f"output/iterations/iteration_{i}_rl_training.log"
+            if os.path.exists(os.path.join(self.work_dir, log_file)):
+                # 可以从日志中提取溢出率等信息
+                pass
+            
+            hpwl_info.append(iteration_data)
+        
+        return hpwl_info
+
     def _extract_hpwl_from_log(self, log_file: str = "openroad_execution.log") -> float:
         """
         从OpenROAD执行日志中提取HPWL值

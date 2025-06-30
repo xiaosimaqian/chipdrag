@@ -1,0 +1,2 @@
+read_def placement_result.def
+report_wirelength 

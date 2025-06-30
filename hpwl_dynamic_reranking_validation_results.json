@@ -1,0 +1,486 @@
+{
+  "baseline": [
+    {
+      "design_name": "mgc_pci_bridge32_b",
+      "baseline_hpwl": 548865308.0,
+      "retrieved_cases": 15,
+      "query": {
+        "text": "优化 mgc_pci_bridge32_b 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_fft_a",
+      "baseline_hpwl": 729294276.0,
+      "retrieved_cases": 15,
+      "query": {
+        "text": "优化 mgc_fft_a 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_superblue12",
+      "baseline_hpwl": 7372.183618,
+      "retrieved_cases": 15,
+      "query": {
+        "text": "优化 mgc_superblue12 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_matrix_mult_1",
+      "baseline_hpwl": 527272468.0,
+      "retrieved_cases": 15,
+      "query": {
+        "text": "优化 mgc_matrix_mult_1 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_des_perf_1",
+      "baseline_hpwl": 365027221.0,
+      "retrieved_cases": 15,
+      "query": {
+        "text": "优化 mgc_des_perf_1 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_pci_bridge32_a",
+      "baseline_hpwl": 365603421.0,
+      "retrieved_cases": 15,
+      "query": {
+        "text": "优化 mgc_pci_bridge32_a 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_fft_b",
+      "baseline_hpwl": 729294276.0,
+      "retrieved_cases": 15,
+      "query": {
+        "text": "优化 mgc_fft_b 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_edit_dist_a",
+      "baseline_hpwl": 1458.428985,
+      "retrieved_cases": 15,
+      "query": {
+        "text": "优化 mgc_edit_dist_a 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_matrix_mult_b",
+      "baseline_hpwl": 5587.475505,
+      "retrieved_cases": 15,
+      "query": {
+        "text": "优化 mgc_matrix_mult_b 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_fft_1",
+      "baseline_hpwl": 113559161.0,
+      "retrieved_cases": 15,
+      "query": {
+        "text": "优化 mgc_fft_1 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_des_perf_b",
+      "baseline_hpwl": 363872668.0,
+      "retrieved_cases": 15,
+      "query": {
+        "text": "优化 mgc_des_perf_b 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_superblue11_a",
+      "baseline_hpwl": 28221.33762,
+      "retrieved_cases": 15,
+      "query": {
+        "text": "优化 mgc_superblue11_a 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_des_perf_a",
+      "baseline_hpwl": 3165.862102,
+      "retrieved_cases": 15,
+      "query": {
+        "text": "优化 mgc_des_perf_a 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_fft_2",
+      "baseline_hpwl": 113559161.0,
+      "retrieved_cases": 15,
+      "query": {
+        "text": "优化 mgc_fft_2 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_matrix_mult_a",
+      "baseline_hpwl": 4972.685739,
+      "retrieved_cases": 15,
+      "query": {
+        "text": "优化 mgc_matrix_mult_a 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_superblue16_a",
+      "baseline_hpwl": 17796.417164,
+      "retrieved_cases": 15,
+      "query": {
+        "text": "优化 mgc_superblue16_a 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    }
+  ],
+  "dynamic": [
+    {
+      "design_name": "mgc_pci_bridge32_b",
+      "improved_hpwl": 548865308.0,
+      "baseline_hpwl": 548865308.0,
+      "hpwl_improvement": 0.0,
+      "retrieved_cases": 3,
+      "dynamic_k": 3,
+      "query": {
+        "text": "优化 mgc_pci_bridge32_b 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_fft_a",
+      "improved_hpwl": 729294276.0,
+      "baseline_hpwl": 729294276.0,
+      "hpwl_improvement": 0.0,
+      "retrieved_cases": 3,
+      "dynamic_k": 3,
+      "query": {
+        "text": "优化 mgc_fft_a 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_superblue12",
+      "improved_hpwl": 7372.183618,
+      "baseline_hpwl": 7372.183618,
+      "hpwl_improvement": 0.0,
+      "retrieved_cases": 3,
+      "dynamic_k": 3,
+      "query": {
+        "text": "优化 mgc_superblue12 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_matrix_mult_1",
+      "improved_hpwl": 527272468.0,
+      "baseline_hpwl": 527272468.0,
+      "hpwl_improvement": 0.0,
+      "retrieved_cases": 3,
+      "dynamic_k": 3,
+      "query": {
+        "text": "优化 mgc_matrix_mult_1 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_des_perf_1",
+      "improved_hpwl": 365027221.0,
+      "baseline_hpwl": 365027221.0,
+      "hpwl_improvement": 0.0,
+      "retrieved_cases": 3,
+      "dynamic_k": 3,
+      "query": {
+        "text": "优化 mgc_des_perf_1 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_pci_bridge32_a",
+      "improved_hpwl": 365603421.0,
+      "baseline_hpwl": 365603421.0,
+      "hpwl_improvement": 0.0,
+      "retrieved_cases": 3,
+      "dynamic_k": 3,
+      "query": {
+        "text": "优化 mgc_pci_bridge32_a 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_fft_b",
+      "improved_hpwl": 729294276.0,
+      "baseline_hpwl": 729294276.0,
+      "hpwl_improvement": 0.0,
+      "retrieved_cases": 3,
+      "dynamic_k": 3,
+      "query": {
+        "text": "优化 mgc_fft_b 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_edit_dist_a",
+      "improved_hpwl": 1458.428985,
+      "baseline_hpwl": 1458.428985,
+      "hpwl_improvement": 0.0,
+      "retrieved_cases": 3,
+      "dynamic_k": 3,
+      "query": {
+        "text": "优化 mgc_edit_dist_a 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_matrix_mult_b",
+      "improved_hpwl": 5587.475505,
+      "baseline_hpwl": 5587.475505,
+      "hpwl_improvement": 0.0,
+      "retrieved_cases": 3,
+      "dynamic_k": 3,
+      "query": {
+        "text": "优化 mgc_matrix_mult_b 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_fft_1",
+      "improved_hpwl": 113559161.0,
+      "baseline_hpwl": 113559161.0,
+      "hpwl_improvement": 0.0,
+      "retrieved_cases": 3,
+      "dynamic_k": 3,
+      "query": {
+        "text": "优化 mgc_fft_1 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_des_perf_b",
+      "improved_hpwl": 363872668.0,
+      "baseline_hpwl": 363872668.0,
+      "hpwl_improvement": 0.0,
+      "retrieved_cases": 3,
+      "dynamic_k": 3,
+      "query": {
+        "text": "优化 mgc_des_perf_b 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_superblue11_a",
+      "improved_hpwl": 28221.33762,
+      "baseline_hpwl": 28221.33762,
+      "hpwl_improvement": 0.0,
+      "retrieved_cases": 3,
+      "dynamic_k": 3,
+      "query": {
+        "text": "优化 mgc_superblue11_a 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_des_perf_a",
+      "improved_hpwl": 3165.862102,
+      "baseline_hpwl": 3165.862102,
+      "hpwl_improvement": 0.0,
+      "retrieved_cases": 3,
+      "dynamic_k": 3,
+      "query": {
+        "text": "优化 mgc_des_perf_a 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_fft_2",
+      "improved_hpwl": 113559161.0,
+      "baseline_hpwl": 113559161.0,
+      "hpwl_improvement": 0.0,
+      "retrieved_cases": 8,
+      "dynamic_k": 8,
+      "query": {
+        "text": "优化 mgc_fft_2 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_matrix_mult_a",
+      "improved_hpwl": 4972.685739,
+      "baseline_hpwl": 4972.685739,
+      "hpwl_improvement": 0.0,
+      "retrieved_cases": 3,
+      "dynamic_k": 3,
+      "query": {
+        "text": "优化 mgc_matrix_mult_a 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    },
+    {
+      "design_name": "mgc_superblue16_a",
+      "improved_hpwl": 17796.417164,
+      "baseline_hpwl": 17796.417164,
+      "hpwl_improvement": 0.0,
+      "retrieved_cases": 3,
+      "dynamic_k": 3,
+      "query": {
+        "text": "优化 mgc_superblue16_a 的布局，设计规模: 0 实例",
+        "design_type": "unknown",
+        "complexity": "medium",
+        "constraints": {}
+      }
+    }
+  ],
+  "rl": {
+    "episodes": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20
+    ],
+    "hpwl_improvements": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "exploration_rates": [
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1
+    ],
+    "convergence_episode": 10,
+    "final_improvement": 0.0
+  },
+  "overall_stats": {
+    "total_designs": 16,
+    "valid_comparisons": 16,
+    "avg_hpwl_improvement": 0.0,
+    "max_hpwl_improvement": 0.0,
+    "min_hpwl_improvement": 0.0,
+    "std_hpwl_improvement": 0.0,
+    "positive_improvements": 0,
+    "improvement_rate": 0.0
+  }
+}
