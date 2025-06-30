@@ -143,26 +143,43 @@ class DynamicRAGRetriever:
         """初始检索"""
         try:
             # 从知识库检索
-            raw_results = self.knowledge_base.query(
-                text=query.get('text', ''),
+            raw_results = self.knowledge_base.get_similar_cases(
+                query,
                 top_k=self.dynamic_k_range[1]  # 使用最大k值
             )
-            
             # 转换为动态检索结果
             results = []
             for result in raw_results:
-                dynamic_result = DynamicRetrievalResult(
-                    knowledge=result.get('content', {}),
-                    relevance_score=result.get('similarity', 0.0),
-                    granularity_level=result.get('granularity', 'global'),
-                    source=result.get('source', 'unknown'),
-                    entity_embeddings=self._extract_entity_embeddings(result),
-                    retrieval_count=1
-                )
-                results.append(dynamic_result)
-            
+                # 处理知识库返回的案例格式
+                if isinstance(result, dict):
+                    # 提取内容 - 优先使用layout，然后是optimization_result
+                    content = result.get('layout', result.get('optimization_result', {}))
+                    
+                    # 计算相似度分数（如果没有提供，使用默认值）
+                    similarity = result.get('similarity', 0.5)
+                    
+                    # 提取粒度级别
+                    granularity = 'global'  # 默认粒度
+                    if 'hierarchy' in result and 'levels' in result['hierarchy']:
+                        granularity = result['hierarchy']['levels'][0] if result['hierarchy']['levels'] else 'global'
+                    
+                    # 提取来源
+                    source = result.get('name', result.get('id', 'unknown'))
+                    
+                    dynamic_result = DynamicRetrievalResult(
+                        knowledge=content,
+                        relevance_score=similarity,
+                        granularity_level=granularity,
+                        source=str(source),
+                        entity_embeddings=self._extract_entity_embeddings(result),
+                        retrieval_count=1
+                    )
+                    results.append(dynamic_result)
+                else:
+                    # 如果结果不是字典，跳过
+                    self.logger.warning(f"跳过非字典格式的检索结果: {type(result)}")
+                    continue
             return results
-            
         except Exception as e:
             self.logger.error(f"初始检索失败: {str(e)}")
             return []
@@ -231,38 +248,31 @@ class DynamicRAGRetriever:
     def _enhance_with_entities(self, 
                               results: List[DynamicRetrievalResult], 
                               design_info: Dict[str, Any]) -> List[DynamicRetrievalResult]:
-        """实体增强处理"""
-        try:
-            enhanced_results = []
-            
-            for result in results:
-                # 1. 提取实体信息
-                entities = self._extract_entities(result.knowledge, design_info)
+        """实体增强处理，兼容str类型"""
+        enhanced_results = []
+        for result in results:
+            # 只对dict类型做实体增强
+            if isinstance(result, DynamicRetrievalResult):
+                knowledge = result.knowledge if isinstance(result.knowledge, dict) else {}
+                # 提取实体信息
+                entities = self._extract_entities(knowledge, design_info)
                 
-                # 2. 压缩实体嵌入
+                # 压缩实体嵌入
                 compressed_embeddings = self._compress_entity_embeddings(entities)
                 
-                # 3. 更新结果
+                # 更新结果
                 result.entity_embeddings = compressed_embeddings
                 enhanced_results.append(result)
-            
-            return enhanced_results
-            
-        except Exception as e:
-            self.logger.error(f"实体增强处理失败: {str(e)}")
-            return results
+            else:
+                # 兼容str类型，直接跳过或原样返回
+                enhanced_results.append(result)
+        return enhanced_results
     
     def update_with_feedback(self, 
                            query_hash: str, 
-                           layout_result: Dict[str, Any],
-                           quality_feedback: LayoutQualityFeedback):
-        """基于布局质量反馈更新重排序策略
-        
-        Args:
-            query_hash: 查询哈希
-            layout_result: 布局结果
-            quality_feedback: 质量反馈
-        """
+                           layout_result: dict,
+                           quality_feedback: dict):
+        """基于布局质量反馈更新重排序策略"""
         try:
             # 1. 记录质量反馈
             self.quality_feedback_history.append({
@@ -270,31 +280,31 @@ class DynamicRAGRetriever:
                 'feedback': quality_feedback,
                 'timestamp': datetime.now().isoformat()
             })
-            
             # 2. 更新Q-learning智能体
             self._update_rl_agent(query_hash, quality_feedback)
-            
             # 3. 更新检索历史
             if query_hash in self.retrieval_history:
                 for result in self.retrieval_history[query_hash]:
-                    result.quality_feedback = quality_feedback.overall_score
-            
-            self.logger.info(f"基于反馈更新重排序策略，质量分数: {quality_feedback.overall_score}")
-            
+                    if isinstance(quality_feedback, dict):
+                        result.quality_feedback = quality_feedback.get('overall_score', 0.5)
+                    else:
+                        result.quality_feedback = 0.5
+            score = quality_feedback.get('overall_score', 0.5) if isinstance(quality_feedback, dict) else 0.5
+            self.logger.info(f"基于反馈更新重排序策略，质量分数: {score}")
         except Exception as e:
             self.logger.error(f"更新反馈失败: {str(e)}")
     
     def _extract_state_features(self, 
-                               query: Dict[str, Any], 
-                               design_info: Dict[str, Any],
-                               results: List[DynamicRetrievalResult]) -> Dict[str, Any]:
+                               query: dict, 
+                               design_info: dict,
+                               results: list) -> dict:
         """提取状态特征"""
         return {
-            'query_complexity': len(query.get('text', '')),
-            'design_size': len(design_info.get('components', [])),
+            'query_complexity': len(query.get('text', '')) if isinstance(query, dict) else 0,
+            'design_size': len(design_info.get('components', [])) if isinstance(design_info, dict) else 0,
             'result_count': len(results),
             'avg_relevance': np.mean([r.relevance_score for r in results]) if results else 0.0,
-            'design_type': design_info.get('type', 'unknown')
+            'design_type': design_info.get('type', 'unknown') if isinstance(design_info, dict) else 'unknown'
         }
     
     def _hash_state(self, state_features: Dict[str, Any]) -> str:
@@ -311,7 +321,7 @@ class DynamicRAGRetriever:
             if source in self.quality_feedback_history:
                 # 计算该来源的平均质量分数
                 source_feedbacks = [
-                    f['feedback'].overall_score 
+                    f['feedback'].get('overall_score', 0.5) if isinstance(f['feedback'], dict) else 0.5
                     for f in self.quality_feedback_history 
                     if f['query_hash'] in self.retrieval_history and 
                     any(r.source == source for r in self.retrieval_history[f['query_hash']])
@@ -355,52 +365,46 @@ class DynamicRAGRetriever:
         
         return weights
     
-    def _extract_entities(self, knowledge: Dict[str, Any], design_info: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _extract_entities(self, knowledge: dict, design_info: dict) -> list:
         """提取实体信息"""
         entities = []
-        
         # 从知识中提取组件实体
-        if 'components' in knowledge:
+        if isinstance(knowledge, dict) and 'components' in knowledge:
             for comp in knowledge['components']:
-                entities.append({
-                    'type': 'component',
-                    'name': comp.get('name', ''),
-                    'category': comp.get('type', ''),
-                    'properties': comp.get('properties', {})
-                })
-        
+                if isinstance(comp, dict):
+                    entities.append({
+                        'type': 'component',
+                        'name': comp.get('name', ''),
+                        'category': comp.get('type', ''),
+                        'properties': comp.get('properties', {})
+                    })
         # 从设计信息中提取约束实体
-        if 'constraints' in design_info:
+        if isinstance(design_info, dict) and 'constraints' in design_info:
             for constraint in design_info['constraints']:
-                entities.append({
-                    'type': 'constraint',
-                    'name': constraint.get('name', ''),
-                    'category': constraint.get('type', ''),
-                    'properties': constraint.get('properties', {})
-                })
-        
+                if isinstance(constraint, dict):
+                    entities.append({
+                        'type': 'constraint',
+                        'name': constraint.get('name', ''),
+                        'category': constraint.get('type', ''),
+                        'properties': constraint.get('properties', {})
+                    })
         return entities
     
-    def _compress_entity_embeddings(self, entities: List[Dict[str, Any]]) -> np.ndarray:
+    def _compress_entity_embeddings(self, entities: list) -> np.ndarray:
         """压缩实体嵌入"""
         if not entities:
             return np.zeros(self.compressed_entity_dim)
-        
-        # 简单的实体嵌入压缩（实际应用中可以使用更复杂的压缩方法）
         entity_features = []
         for entity in entities:
-            # 将实体信息转换为特征向量
-            feature = [
-                hash(entity.get('name', '')) % 1000 / 1000.0,
-                hash(entity.get('category', '')) % 1000 / 1000.0,
-                len(entity.get('properties', {}))
-            ]
-            entity_features.append(feature)
-        
-        # 平均池化
+            if isinstance(entity, dict):
+                feature = [
+                    hash(entity.get('name', '')) % 1000 / 1000.0,
+                    hash(entity.get('category', '')) % 1000 / 1000.0,
+                    len(entity.get('properties', {}))
+                ]
+                entity_features.append(feature)
         if entity_features:
             avg_features = np.mean(entity_features, axis=0)
-            # 压缩到指定维度
             compressed = np.zeros(self.compressed_entity_dim)
             compressed[:min(len(avg_features), self.compressed_entity_dim)] = \
                 avg_features[:self.compressed_entity_dim]
@@ -413,43 +417,29 @@ class DynamicRAGRetriever:
         # 这里可以实现更复杂的实体嵌入提取逻辑
         return None
     
-    def _calculate_entity_similarity(self, 
-                                   entity_embeddings: np.ndarray, 
-                                   query: Dict[str, Any]) -> float:
+    def _calculate_entity_similarity(self, entity_embeddings: np.ndarray, query: dict) -> float:
         """计算实体相似度"""
-        # 简单的相似度计算（实际应用中可以使用更复杂的相似度度量）
         if entity_embeddings is None:
             return 0.5
-        
-        # 基于查询文本的简单相似度
-        query_text = query.get('text', '')
+        query_text = query.get('text', '') if isinstance(query, dict) else ''
         if query_text:
-            # 简单的文本相似度计算
             return min(1.0, len(query_text) / 100.0)
         else:
             return 0.5
     
-    def _update_rl_agent(self, query_hash: str, quality_feedback: LayoutQualityFeedback):
+    def _update_rl_agent(self, query_hash: str, quality_feedback: dict):
         """更新强化学习智能体"""
         try:
             if query_hash in self.retrieval_history:
-                # 获取当前状态和动作
                 results = self.retrieval_history[query_hash]
                 k_used = len(results)
-                
-                # 计算奖励（基于质量反馈）
-                reward = quality_feedback.overall_score
-                
-                # 更新Q值（这里简化处理，实际应用中需要更复杂的Q-learning更新）
-                state_key = query_hash  # 简化状态表示
+                reward = quality_feedback.get('overall_score', 0.5) if isinstance(quality_feedback, dict) else 0.5
+                state_key = query_hash
                 if state_key in self.rl_agent['q_table']:
                     current_q = self.rl_agent['q_table'][state_key].get(k_used, 0.0)
-                    # 简单的Q值更新
                     new_q = current_q + self.rl_agent['alpha'] * (reward - current_q)
                     self.rl_agent['q_table'][state_key][k_used] = new_q
-                
                 self.logger.info(f"更新RL智能体，k={k_used}, 奖励={reward}")
-                
         except Exception as e:
             self.logger.error(f"更新RL智能体失败: {str(e)}")
     
@@ -464,7 +454,8 @@ class DynamicRAGRetriever:
             'total_queries': len(self.retrieval_history),
             'total_feedbacks': len(self.quality_feedback_history),
             'avg_quality_score': np.mean([
-                f['feedback'].overall_score for f in self.quality_feedback_history
+                f['feedback'].get('overall_score', 0.5) if isinstance(f['feedback'], dict) else 0.5 
+                for f in self.quality_feedback_history
             ]) if self.quality_feedback_history else 0.0,
             'rl_agent_states': len(self.rl_agent['q_table'])
         } 

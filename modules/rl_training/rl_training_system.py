@@ -206,15 +206,15 @@ class LayoutEnvironment:
         if not self.use_openroad:
             raise RuntimeError("模拟模式已被禁用，只允许真实OpenROAD训练")
         
-        try:
-            # 使用OpenROAD接口进行初始布局
+            try:
+                # 使用OpenROAD接口进行初始布局
             result = self.openroad_interface.run_placement()
             if result['success']:
                 logger.info("初始布局完成")
             else:
                 raise RuntimeError(f"初始布局失败: {result.get('stderr', '未知错误')}")
-        except Exception as e:
-            logger.error(f"初始布局失败: {e}")
+            except Exception as e:
+                logger.error(f"初始布局失败: {e}")
             raise RuntimeError(f"初始布局失败: {e}")
     
     def _execute_placement_action(self, action: LayoutAction) -> bool:
@@ -222,24 +222,24 @@ class LayoutEnvironment:
         if not self.use_openroad:
             raise RuntimeError("模拟模式已被禁用，只允许真实OpenROAD训练")
         
-        try:
+            try:
             # 使用OpenROAD接口执行布局动作
             result = self.openroad_interface.run_placement(
                 density_target=action.density_target,
                 wirelength_weight=action.wirelength_weight,
                 density_weight=action.density_weight
             )
-            
-            if result['success']:
-                logger.info(f"布局动作执行成功: 迭代{self.current_iteration}")
-                return True
-            else:
-                logger.error(f"布局动作执行失败: {result.get('stderr', '未知错误')}")
-                return False
                 
-        except Exception as e:
-            logger.error(f"执行布局动作时出错: {e}")
-            return False
+            if result['success']:
+                    logger.info(f"布局动作执行成功: 迭代{self.current_iteration}")
+                    return True
+                else:
+                logger.error(f"布局动作执行失败: {result.get('stderr', '未知错误')}")
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"执行布局动作时出错: {e}")
+                return False
     
     def _generate_placement_tcl(self, action: LayoutAction) -> str:
         """生成布局TCL脚本"""
@@ -281,6 +281,9 @@ set_density_weight {action.density_weight}
 # 执行全局布局
 global_placement
 
+# 执行详细布局
+detailed_placement
+
 # 获取布局指标
 set hpwl [get_total_wirelength]
 set overflow [get_placement_overflow]
@@ -313,10 +316,10 @@ exit
         if not self.use_openroad:
             raise RuntimeError("模拟模式已被禁用，只允许真实OpenROAD训练")
         
-        try:
+            try:
             # 使用OpenROAD接口获取当前状态
             result = self.openroad_interface.get_placement_quality({})
-            
+                    
             # 从结果中提取指标
             hpwl = result.get('wirelength', 1000000.0)
             overflow = result.get('overflow', 0.2)
@@ -325,21 +328,21 @@ exit
             
             # 如果某些指标缺失，使用默认值
             if hpwl <= 0:
-                hpwl = 1000000.0
+                    hpwl = 1000000.0
             if overflow < 0:
-                overflow = 0.2
+                    overflow = 0.2
             if density <= 0:
-                density = 0.8
+                    density = 0.8
             if utilization <= 0:
-                utilization = 0.7
-                
-        except Exception as e:
+                    utilization = 0.7
+                    
+            except Exception as e:
             logger.error(f"获取布局状态时出错: {e}")
-            # 使用默认值
-            hpwl = 1000000.0
-            overflow = 0.2
-            density = 0.8
-            utilization = 0.7
+                # 使用默认值
+                hpwl = 1000000.0
+                overflow = 0.2
+                density = 0.8
+                utilization = 0.7
         
         return LayoutState(
             hpwl=hpwl,

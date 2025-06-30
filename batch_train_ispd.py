@@ -1,355 +1,329 @@
 #!/usr/bin/env python3
 """
-ISPD 2015竞赛基准测试批量训练脚本
-支持并行处理和详细进度显示
+ISPD 2015基准测试批量训练脚本
+支持迭代布局模式，生成RL训练数据
 """
 
 import os
 import sys
-import time
 import json
-import argparse
 import logging
-import subprocess
-from datetime import datetime
+import argparse
 from pathlib import Path
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import List, Dict, Any
-import concurrent.futures
-from tqdm import tqdm
-import threading
 
 # 添加项目根目录到Python路径
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
 
-# 导入OpenROAD接口
-try:
-    from modules.rl_training.real_openroad_interface_fixed import RealOpenROADInterface
-    OPENROAD_AVAILABLE = True
-except ImportError as e:
-    logger.error(f"无法导入OpenROAD接口: {e}")
-    logger.error("请确保OpenROAD环境已正确配置")
-    OPENROAD_AVAILABLE = False
+from modules.rl_training.real_openroad_interface_fixed import RealOpenROADInterface
 
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('batch_training.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
+    format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-class ISPDBatchTrainer:
-    """ISPD批量训练器"""
+class BatchTrainer:
+    """批量训练器"""
     
-    def __init__(self, benchmark_root="data/designs/ispd_2015_contest_benchmark", 
-                 results_dir="results/ispd_training", force_retrain=False, max_workers=4):
-        """
-        初始化批量训练器
-        
-        Args:
-            benchmark_root: ISPD benchmark根目录
-            results_dir: 结果保存目录
-            force_retrain: 是否强制重新训练（忽略已有结果）
-            max_workers: 最大并行工作线程数
-        """
-        self.benchmark_root = Path(benchmark_root)
+    def __init__(self, benchmark_dir: str, results_dir: str, use_iterative: bool = False, num_iterations: int = 10):
+        self.benchmark_dir = Path(benchmark_dir)
         self.results_dir = Path(results_dir)
-        self.force_retrain = force_retrain
-        self.max_workers = max_workers
+        self.use_iterative = use_iterative
+        self.num_iterations = num_iterations
         
         # 创建结果目录
         self.results_dir.mkdir(parents=True, exist_ok=True)
         
-        # 进度跟踪
-        self.completed_designs = 0
-        self.total_designs = 0
-        self.failed_designs = []
-        self.successful_designs = []
-        self.lock = threading.Lock()
+        # 设计规模分类
+        self.large_designs = [
+            'mgc_superblue16_a', 'mgc_superblue11_a', 'mgc_superblue12',
+            'mgc_des_perf_a', 'mgc_des_perf_1', 'mgc_des_perf_b'
+        ]
+        self.medium_designs = [
+            'mgc_pci_bridge32_a', 'mgc_pci_bridge32_b',
+            'mgc_matrix_mult_a', 'mgc_matrix_mult_b', 'mgc_matrix_mult_1'
+        ]
+        self.small_designs = [
+            'mgc_fft_a', 'mgc_fft_1', 'mgc_fft_2', 'mgc_fft_b',
+            'mgc_edit_dist_a'
+        ]
         
-        logger.info(f"批量训练器初始化完成")
-        logger.info(f"基准测试目录: {self.benchmark_root}")
+        logger.info("批量训练器初始化完成")
+        logger.info(f"基准测试目录: {self.benchmark_dir}")
         logger.info(f"结果目录: {self.results_dir}")
-        logger.info(f"最大并行数: {self.max_workers}")
+        if self.use_iterative:
+            logger.info(f"使用迭代布局模式，迭代次数: {self.num_iterations}")
     
-    def _check_docker_resources(self):
-        """检查Docker资源是否充足"""
-        try:
-            # 检查Docker是否运行
-            result = subprocess.run(['docker', 'info'], 
-                                  capture_output=True, text=True, timeout=10)
-            if result.returncode != 0:
-                logger.error("Docker未运行或无法访问")
-                return False
-            
-            # 检查可用内存
-            result = subprocess.run(['docker', 'system', 'df'], 
-                                  capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                logger.info("Docker资源检查通过")
-                return True
-            return True
-        except Exception as e:
-            logger.error(f"Docker资源检查失败: {e}")
-            return False
+    def get_design_directories(self) -> List[Path]:
+        """获取所有设计目录"""
+        design_dirs = []
+        for item in self.benchmark_dir.iterdir():
+            if item.is_dir() and not item.name.startswith('.'):
+                design_dirs.append(item)
+        return sorted(design_dirs)
     
-    def get_design_list(self) -> List[str]:
-        """获取所有设计列表"""
-        designs = []
-        if self.benchmark_root.exists():
-            for item in self.benchmark_root.iterdir():
-                if item.is_dir() and (item / "design.v").exists():
-                    designs.append(item.name)
-        designs.sort()
-        logger.info(f"发现 {len(designs)} 个设计: {designs}")
-        return designs
-    
-    def update_progress(self, design_name: str, success: bool, message: str = ""):
-        """更新进度信息"""
-        with self.lock:
-            self.completed_designs += 1
-            if success:
-                self.successful_designs.append(design_name)
-            else:
-                self.failed_designs.append(design_name)
-            
-            # 计算进度百分比
-            progress = (self.completed_designs / self.total_designs) * 100
-            
-            logger.info(f"[{self.completed_designs}/{self.total_designs}] {progress:.1f}% - {design_name}: {'成功' if success else '失败'} {message}")
-            
-            # 实时更新进度条
-            if hasattr(self, 'pbar'):
-                self.pbar.update(1)
-                self.pbar.set_postfix({
-                    '成功': len(self.successful_designs),
-                    '失败': len(self.failed_designs),
-                    '进度': f"{progress:.1f}%"
-                })
-    
-    def train_single_design(self, design_name: str) -> Dict:
-        """训练单个设计"""
-        # 检查OpenROAD是否可用
-        if not OPENROAD_AVAILABLE:
-            error_msg = "OpenROAD接口不可用，无法进行真实训练"
-            logger.error(f"{design_name}: {error_msg}")
-            self.update_progress(design_name, False, error_msg)
-            return {"success": False, "error": error_msg}
-        
-        design_path = os.path.join(self.benchmark_root, design_name)
-        
-        # 检查结果文件
-        result_file = os.path.join(self.results_dir, f"{design_name}_result.json")
-        if not self.force_retrain and os.path.exists(result_file):
-            logger.info(f"跳过已存在的设计: {design_name}")
-            self.update_progress(design_name, True, "已存在，跳过")
-            return {"success": True, "skipped": True}
-        
-        logger.info(f"开始训练设计: {design_name}")
-        logger.info(f"设计路径: {design_path}")
-        
-        try:
-            # 初始化OpenROAD接口
-            interface = RealOpenROADInterface(design_path)
-            
-            # 生成TCL脚本
-            tcl_script = interface._generate_tcl_script()
-            tcl_path = os.path.join(design_path, "openroad_script.tcl")
-            
-            with open(tcl_path, 'w') as f:
-                f.write(tcl_script)
-            
-            logger.info(f"TCL脚本已生成: {tcl_path}")
-            
-            # 运行OpenROAD脚本
-            start_time = time.time()
-            result = interface.run_placement()
-            execution_time = time.time() - start_time
-            
-            # 处理返回的数据格式
-            stdout_content = result.get("stdout", [])
-            stderr_content = result.get("stderr", [])
-            
-            # 确保stdout和stderr是字符串
-            if isinstance(stdout_content, list):
-                stdout_content = "\n".join(stdout_content)
-            if isinstance(stderr_content, list):
-                stderr_content = "\n".join(stderr_content)
-            
-            # 保存结果
-            result_data = {
-                "design_name": design_name,
-                "success": result["success"],
-                "execution_time": execution_time,
-                "wirelength": result.get("metrics", {}).get("wirelength", 0),
-                "area": result.get("metrics", {}).get("area", 0),
-                "stdout": stdout_content,
-                "stderr": stderr_content,
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            # 保存结果文件
-            with open(result_file, 'w', encoding='utf-8') as f:
-                json.dump(result_data, f, indent=2, ensure_ascii=False)
-            
-            # 保存日志文件
-            log_file = os.path.join(self.results_dir, f"{design_name}_log.txt")
-            with open(log_file, 'w', encoding='utf-8') as f:
-                f.write(f"=== {design_name} 训练日志 ===\n")
-                f.write(f"时间: {datetime.now()}\n")
-                f.write(f"成功: {result['success']}\n")
-                f.write(f"执行时间: {execution_time:.2f}秒\n\n")
-                f.write("=== 标准输出 ===\n")
-                f.write(stdout_content)
-                f.write("\n\n=== 错误输出 ===\n")
-                f.write(stderr_content)
-            
-            success = result["success"]
-            message = f"执行时间: {execution_time:.2f}秒"
-            if success:
-                message += f", 线长: {result_data['wirelength']:.2f}, 面积: {result_data['area']:.2f}"
-            
-            self.update_progress(design_name, success, message)
-            return result_data
-            
-        except Exception as e:
-            error_msg = f"训练失败: {str(e)}"
-            logger.error(f"{design_name}: {error_msg}")
-            
-            # 保存错误结果
-            error_result = {
-                "design_name": design_name,
-                "success": False,
-                "error": str(e),
-                "execution_time": 0,
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            with open(result_file, 'w', encoding='utf-8') as f:
-                json.dump(error_result, f, indent=2, ensure_ascii=False)
-            
-            self.update_progress(design_name, False, error_msg)
-            return error_result
-    
-    def run_batch_training(self):
-        """运行批量训练"""
-        logger.info("开始批量训练...")
-        
-        # 获取设计列表
-        designs = self.get_design_list()
-        if not designs:
-            logger.error("未找到任何设计")
-            return
-        
-        self.total_designs = len(designs)
-        logger.info(f"总共 {self.total_designs} 个设计需要训练")
-        
-        # 检查Docker资源
-        if not self._check_docker_resources():
-            logger.error("Docker资源检查失败，退出训练")
-            return
-        
-        # 创建进度条
-        self.pbar = tqdm(total=self.total_designs, desc="批量训练进度", 
-                        bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}] {postfix}')
-        
-        start_time = time.time()
-        
-        try:
-            # 使用线程池进行并行处理
-            with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                # 提交所有任务
-                future_to_design = {
-                    executor.submit(self.train_single_design, design): design 
-                    for design in designs
-                }
-                
-                # 收集结果
-                results = []
-                for future in concurrent.futures.as_completed(future_to_design):
-                    design = future_to_design[future]
-                    try:
-                        result = future.result()
-                        results.append(result)
-                    except Exception as e:
-                        logger.error(f"{design} 执行异常: {e}")
-                        self.update_progress(design, False, f"异常: {e}")
-        
-        finally:
-            self.pbar.close()
-        
-        total_time = time.time() - start_time
-        
-        # 生成训练总结
-        self.generate_training_summary(results, total_time)
-        
-        logger.info(f"批量训练完成！总时间: {total_time:.2f}秒")
-        logger.info(f"成功: {len(self.successful_designs)}, 失败: {len(self.failed_designs)}")
-    
-    def generate_training_summary(self, results: List[Dict], total_time: float):
-        """生成训练总结报告"""
-        summary = {
-            "training_info": {
-                "total_designs": self.total_designs,
-                "successful_designs": len(self.successful_designs),
-                "failed_designs": len(self.failed_designs),
-                "total_time": total_time,
-                "average_time": total_time / self.total_designs if self.total_designs > 0 else 0,
-                "timestamp": datetime.now().isoformat()
-            },
-            "successful_designs": self.successful_designs,
-            "failed_designs": self.failed_designs,
-            "detailed_results": results
+    def classify_designs(self, design_dirs: List[Path]) -> Dict[str, List[Path]]:
+        """按规模分类设计"""
+        classified = {
+            'large': [],
+            'medium': [],
+            'small': []
         }
         
-        # 保存总结报告
-        summary_file = self.results_dir / "training_summary.json"
-        with open(summary_file, 'w', encoding='utf-8') as f:
-            json.dump(summary, f, indent=2, ensure_ascii=False)
+        for design_dir in design_dirs:
+            design_name = design_dir.name
+            if design_name in self.large_designs:
+                classified['large'].append(design_dir)
+            elif design_name in self.medium_designs:
+                classified['medium'].append(design_dir)
+            elif design_name in self.small_designs:
+                classified['small'].append(design_dir)
+            else:
+                # 默认归类为中等规模
+                classified['medium'].append(design_dir)
         
-        logger.info(f"训练总结已保存到: {summary_file}")
+        return classified
+    
+    def train_single_design(self, design_dir: Path) -> Dict[str, Any]:
+        """训练单个设计"""
+        design_name = design_dir.name
+        logger.info(f"开始训练设计: {design_name}")
         
-        # 打印简要统计
-        print("\n" + "="*60)
-        print("批量训练总结")
-        print("="*60)
-        print(f"总设计数: {self.total_designs}")
-        print(f"成功: {len(self.successful_designs)}")
-        print(f"失败: {len(self.failed_designs)}")
-        print(f"成功率: {len(self.successful_designs)/self.total_designs*100:.1f}%")
-        print(f"总时间: {total_time:.2f}秒")
-        print(f"平均时间: {total_time/self.total_designs:.2f}秒/设计")
+        try:
+            # 创建OpenROAD接口
+            interface = RealOpenROADInterface(str(design_dir))
+            
+            if self.use_iterative:
+                # 迭代布局模式
+                logger.info(f"使用迭代布局模式，迭代次数: {self.num_iterations}")
+                result = interface.run_iterative_placement(self.num_iterations)
+                
+                if result.get("success", False):
+                    # 收集迭代数据
+                    iteration_data = interface.collect_iteration_data()
+                    result["iteration_data"] = iteration_data
+                    logger.info(f"设计 {design_name} 迭代训练成功，生成 {len(iteration_data)} 个迭代结果")
+                else:
+                    logger.error(f"设计 {design_name} 迭代训练失败: {result.get('error', 'Unknown error')}")
+            else:
+                # 单次布局模式
+                result = interface.run_placement()
+                
+                if result.get("success", False):
+                    logger.info(f"设计 {design_name} 训练成功")
+                else:
+                    logger.error(f"设计 {design_name} 训练失败: {result.get('error', 'Unknown error')}")
+            
+            # 添加设计信息
+            result["design_name"] = design_name
+            result["design_dir"] = str(design_dir)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"设计 {design_name} 训练异常: {e}")
+            return {
+                "design_name": design_name,
+                "design_dir": str(design_dir),
+                "success": False,
+                "error": str(e)
+            }
+    
+    def train_design_batch(self, design_dirs: List[Path], max_workers: int = 4) -> List[Dict[str, Any]]:
+        """批量训练设计"""
+        results = []
         
-        if self.failed_designs:
-            print(f"\n失败的设计: {', '.join(self.failed_designs)}")
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # 提交所有任务
+            future_to_design = {
+                executor.submit(self.train_single_design, design_dir): design_dir 
+                for design_dir in design_dirs
+            }
+            
+            # 收集结果
+            for future in as_completed(future_to_design):
+                design_dir = future_to_design[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                    
+                    # 保存单个设计结果
+                    result_file = self.results_dir / f"{design_dir.name}_result.json"
+                    with open(result_file, 'w') as f:
+                        json.dump(result, f, indent=2, ensure_ascii=False)
+                    
+                    logger.info(f"设计 {design_dir.name} 训练完成，结果保存到: {result_file}")
+                    
+                except Exception as e:
+                    logger.error(f"设计 {design_dir.name} 训练失败: {e}")
+                    error_result = {
+                        "design_name": design_dir.name,
+                        "design_dir": str(design_dir),
+                        "success": False,
+                        "error": str(e)
+                    }
+                    results.append(error_result)
+                    
+                    # 保存错误结果
+                    result_file = self.results_dir / f"{design_dir.name}_result.json"
+                    with open(result_file, 'w') as f:
+                        json.dump(error_result, f, indent=2, ensure_ascii=False)
         
-        print("="*60)
+        return results
+    
+    def run_batch_training(self, max_workers: int = 4):
+        """运行批量训练"""
+        # 获取所有设计目录
+        design_dirs = self.get_design_directories()
+        logger.info(f"找到 {len(design_dirs)} 个设计目录")
+        
+        # 按规模分类设计
+        classified_designs = self.classify_designs(design_dirs)
+        
+        logger.info(f"设计分类: 大规模={len(classified_designs['large'])}, 中等规模={len(classified_designs['medium'])}, 小规模={len(classified_designs['small'])}")
+        
+        all_results = []
+        
+        # 分批处理：先处理小规模设计，再处理中等规模，最后处理大规模设计
+        for size, designs in [('small', classified_designs['small']), 
+                             ('medium', classified_designs['medium']), 
+                             ('large', classified_designs['large'])]:
+            if designs:
+                logger.info(f"开始处理{size}规模设计，数量: {len(designs)}")
+                
+                # 根据规模调整并发数
+                if size == 'large':
+                    workers = min(2, max_workers)  # 大规模设计减少并发
+                elif size == 'medium':
+                    workers = min(3, max_workers)  # 中等规模设计中等并发
+                else:
+                    workers = max_workers  # 小规模设计可以高并发
+                
+                batch_results = self.train_design_batch(designs, max_workers=workers)
+                all_results.extend(batch_results)
+                
+                logger.info(f"{size}规模设计处理完成")
+        
+        # 生成训练报告
+        self.generate_training_report(all_results)
+        
+        logger.info("批量训练完成")
+        return all_results
+    
+    def generate_training_report(self, results: List[Dict[str, Any]]):
+        """生成训练报告"""
+        report_file = self.results_dir / "iterative_training_report.md"
+        
+        # 统计结果
+        total_designs = len(results)
+        successful_designs = sum(1 for r in results if r.get("success", False))
+        failed_designs = total_designs - successful_designs
+        
+        # 按规模统计
+        size_stats = {"large": 0, "medium": 0, "small": 0}
+        success_by_size = {"large": 0, "medium": 0, "small": 0}
+        
+        for result in results:
+            design_name = result["design_name"]
+            if design_name in self.large_designs:
+                size_stats["large"] += 1
+                if result.get("success", False):
+                    success_by_size["large"] += 1
+            elif design_name in self.medium_designs:
+                size_stats["medium"] += 1
+                if result.get("success", False):
+                    success_by_size["medium"] += 1
+            elif design_name in self.small_designs:
+                size_stats["small"] += 1
+                if result.get("success", False):
+                    success_by_size["small"] += 1
+        
+        # 生成报告内容
+        report_content = f"""# ISPD 2015 迭代布局训练报告
+
+## 训练概览
+- **总设计数量**: {total_designs}
+- **成功设计数量**: {successful_designs}
+- **失败设计数量**: {failed_designs}
+- **成功率**: {successful_designs/total_designs*100:.1f}%
+
+## 按规模统计
+| 规模 | 总数 | 成功 | 成功率 |
+|------|------|------|--------|
+| 大规模 | {size_stats["large"]} | {success_by_size["large"]} | {success_by_size["large"]/max(size_stats["large"], 1)*100:.1f}% |
+| 中等规模 | {size_stats["medium"]} | {success_by_size["medium"]} | {success_by_size["medium"]/max(size_stats["medium"], 1)*100:.1f}% |
+| 小规模 | {size_stats["small"]} | {success_by_size["small"]} | {success_by_size["small"]/max(size_stats["small"], 1)*100:.1f}% |
+
+## 训练配置
+- **迭代模式**: {'是' if self.use_iterative else '否'}
+- **迭代次数**: {self.num_iterations if self.use_iterative else 'N/A'}
+- **Docker资源限制**: 8GB内存, 4CPU核心
+
+## 详细结果
+"""
+        
+        # 添加每个设计的详细结果
+        for result in results:
+            design_name = result["design_name"]
+            success = result.get("success", False)
+            error = result.get("error", "")
+            
+            report_content += f"""
+### {design_name}
+- **状态**: {'成功' if success else '失败'}
+"""
+            
+            if not success and error:
+                report_content += f"- **错误**: {error}\n"
+            
+            if success and self.use_iterative:
+                iteration_data = result.get("iteration_data", [])
+                report_content += f"- **迭代数据**: {len(iteration_data)} 个迭代结果\n"
+        
+        # 写入报告文件
+        with open(report_file, 'w', encoding='utf-8') as f:
+            f.write(report_content)
+        
+        logger.info(f"迭代训练报告已生成: {report_file}")
 
 def main():
-    """主函数"""
-    parser = argparse.ArgumentParser(description="ISPD 2015竞赛基准测试批量训练")
-    parser.add_argument("--benchmark-root", default="data/designs/ispd_2015_contest_benchmark",
-                       help="基准测试目录路径")
-    parser.add_argument("--results-dir", default="results/ispd_training",
+    parser = argparse.ArgumentParser(description="ISPD 2015基准测试批量训练")
+    parser.add_argument("--benchmark-dir", default="data/designs/ispd_2015_contest_benchmark", 
+                       help="基准测试目录")
+    parser.add_argument("--results-dir", default="results/batch_training", 
                        help="结果保存目录")
-    parser.add_argument("--force-retrain", action="store_true",
-                       help="强制重新训练，即使结果已存在")
-    parser.add_argument("--max-workers", type=int, default=4,
-                       help="最大并行工作线程数")
+    parser.add_argument("--use-iterative", action="store_true", 
+                       help="使用迭代布局模式")
+    parser.add_argument("--num-iterations", type=int, default=10, 
+                       help="迭代次数（仅在迭代模式下有效）")
+    parser.add_argument("--max-workers", type=int, default=4, 
+                       help="最大并发工作进程数")
     
     args = parser.parse_args()
     
-    trainer = ISPDBatchTrainer(
-        benchmark_root=args.benchmark_root,
+    # 创建批量训练器
+    trainer = BatchTrainer(
+        benchmark_dir=args.benchmark_dir,
         results_dir=args.results_dir,
-        force_retrain=args.force_retrain,
-        max_workers=args.max_workers
+        use_iterative=args.use_iterative,
+        num_iterations=args.num_iterations
     )
     
-    trainer.run_batch_training()
+    # 运行批量训练
+    if args.use_iterative:
+        logger.info(f"开始迭代布局训练，设计数量: {len(trainer.get_design_directories())}, 迭代次数: {args.num_iterations}")
+    else:
+        logger.info(f"开始单次布局训练，设计数量: {len(trainer.get_design_directories())}")
+    
+    results = trainer.run_batch_training(max_workers=args.max_workers)
+    
+    # 输出统计信息
+    successful = sum(1 for r in results if r.get("success", False))
+    logger.info(f"训练完成: {successful}/{len(results)} 个设计成功")
 
 if __name__ == "__main__":
     main() 

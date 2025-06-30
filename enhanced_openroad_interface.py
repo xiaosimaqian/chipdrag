@@ -334,42 +334,52 @@ for {{set i 1}} {{$i <= $num_iterations}} {{incr i}} {{
         # First iteration: Conservative placement (low density)
         puts "LOG: RL Strategy 1 - Conservative placement"
         global_placement -density 0.70 -wirelength_weight 1.0 -density_weight 0.5
+        detailed_placement
     }} elseif {{$i == 2}} {{
         # Second iteration: Aggressive placement (high density)
         puts "LOG: RL Strategy 2 - Aggressive placement"
         global_placement -density 0.95 -wirelength_weight 0.5 -density_weight 2.0
+        detailed_placement
     }} elseif {{$i == 3}} {{
         # Third iteration: Wirelength-focused placement
         puts "LOG: RL Strategy 3 - Wirelength-focused"
         global_placement -density 0.85 -wirelength_weight 3.0 -density_weight 0.3
+        detailed_placement
     }} elseif {{$i == 4}} {{
         # Fourth iteration: Density-focused placement
         puts "LOG: RL Strategy 4 - Density-focused"
         global_placement -density 0.90 -wirelength_weight 0.3 -density_weight 3.0
+        detailed_placement
     }} elseif {{$i == 5}} {{
         # Fifth iteration: Balanced placement
         puts "LOG: RL Strategy 5 - Balanced placement"
         global_placement -density 0.88 -wirelength_weight 1.5 -density_weight 1.0
+        detailed_placement
     }} elseif {{$i == 6}} {{
         # Sixth iteration: High wirelength weight
         puts "LOG: RL Strategy 6 - High wirelength weight"
         global_placement -density 0.82 -wirelength_weight 4.0 -density_weight 0.2
+        detailed_placement
     }} elseif {{$i == 7}} {{
         # Seventh iteration: High density weight
         puts "LOG: RL Strategy 7 - High density weight"
         global_placement -density 0.92 -wirelength_weight 0.2 -density_weight 4.0
+        detailed_placement
     }} elseif {{$i == 8}} {{
         # Eighth iteration: Mixed strategy
         puts "LOG: RL Strategy 8 - Mixed strategy"
         global_placement -density 0.87 -wirelength_weight 2.0 -density_weight 1.5
+        detailed_placement
     }} elseif {{$i == 9}} {{
         # Ninth iteration: Extreme wirelength optimization
         puts "LOG: RL Strategy 9 - Extreme wirelength optimization"
         global_placement -density 0.75 -wirelength_weight 5.0 -density_weight 0.1
+        detailed_placement
     }} else {{
         # Tenth iteration: Final balanced optimization
         puts "LOG: RL Strategy 10 - Final balanced optimization"
         global_placement -density 0.89 -wirelength_weight 1.0 -density_weight 1.0
+        detailed_placement
     }}
     
     # Save current layout for RL training data
@@ -464,6 +474,174 @@ puts $log_fp "=== RL Training Data Collection Completed ==="
 close $log_fp
 
 puts "LOG: RL training data collection completed, log saved to: $log_file"
+
+# 详细布局 - 使用更宽松的参数
+puts "开始详细布局..."
+puts "LOG: 开始详细布局阶段，启用增强容错机制"
+
+# 详细布局前的状态检查
+puts "LOG: 执行详细布局前状态检查"
+if {{[catch {{report_placement_overflow}} overflow_result]}} {{
+    puts "LOG: 无法获取布局溢出信息: $overflow_result"
+    set has_overflow 0
+}} else {{
+    if {{[string match "*overflow*" $overflow_result]}} {{
+        puts "LOG: 检测到布局溢出，需要详细布局优化"
+        set has_overflow 1
+    }} else {{
+        puts "LOG: 布局无溢出，详细布局可选"
+        set has_overflow 0
+    }}
+}}
+
+# 检查已放置的实例数量
+if {{[catch {{set placed_count [llength [get_placed_cells]]}} result]}} {{
+    puts "LOG: 无法获取已放置实例数量: $result"
+    set placed_count 0
+}} else {{
+    puts "LOG: 已放置实例数量: $placed_count"
+}}
+
+# 检查总实例数量
+if {{[catch {{set total_count [llength [get_cells]]}} result]}} {{
+    puts "LOG: 无法获取总实例数量: $result"
+    set total_count 0
+}} else {{
+    puts "LOG: 总实例数量: $total_count"
+}}
+
+# 计算放置率
+if {{$total_count > 0}} {{
+    set placement_ratio [expr {{double($placed_count) / double($total_count)}}]
+    puts "LOG: 当前放置率: [expr {{$placement_ratio * 100}}]%"
+}} else {{
+    set placement_ratio 0
+    puts "LOG: 无法计算放置率"
+}}
+
+# 详细布局容错机制
+set detailed_placement_success 0
+set max_attempts 5
+
+for {{set attempt 1}} {{$attempt <= $max_attempts}} {{incr attempt}} {{
+    puts "LOG: 详细布局尝试 $attempt/$max_attempts"
+    
+    # 根据尝试次数调整参数
+    switch $attempt {{
+        1 {{
+            set max_disp 5
+            set strategy "标准详细布局"
+        }}
+        2 {{
+            set max_disp 10
+            set strategy "宽松详细布局"
+        }}
+        3 {{
+            set max_disp 20
+            set strategy "非常宽松详细布局"
+        }}
+        4 {{
+            set max_disp 50
+            set strategy "极宽松详细布局"
+        }}
+        5 {{
+            set max_disp 100
+            set strategy "最宽松详细布局"
+        }}
+    }}
+    
+    puts "LOG: 使用策略: $strategy, 最大位移: $max_disp"
+    
+    # 执行详细布局
+    if {{[catch {{detailed_placement -max_displacement $max_disp}} result]}} {{
+        puts "LOG: 详细布局尝试 $attempt 失败: $result"
+        
+        # 检查是否是内存错误
+        if {{[string match "*Signal 11*" $result] || [string match "*segmentation fault*" $result]}} {{
+            puts "LOG: 检测到内存错误，跳过详细布局"
+            break
+        }}
+        
+        # 检查是否是参数错误
+        if {{[string match "*invalid*" $result] || [string match "*unknown*" $result]}} {{
+            puts "LOG: 检测到参数错误，尝试下一个参数"
+            continue
+        }}
+        
+        # 其他错误，继续尝试
+        puts "LOG: 其他错误，继续尝试下一个参数"
+        continue
+    }} else {{
+        puts "LOG: 详细布局尝试 $attempt 成功"
+        set detailed_placement_success 1
+        break
+    }}
+}}
+
+# 如果所有尝试都失败，尝试替代方案
+if {{!$detailed_placement_success}} {{
+    puts "LOG: 所有详细布局尝试都失败，尝试替代方案"
+    
+    # 方案1: 尝试增量布局
+    puts "LOG: 尝试增量布局作为替代方案"
+    if {{[catch {{incremental_placement}} result]}} {{
+        puts "LOG: 增量布局失败: $result"
+    }} else {{
+        puts "LOG: 增量布局成功"
+        set detailed_placement_success 1
+    }}
+    
+    # 方案2: 如果增量布局也失败，尝试简单的合法化
+    if {{!$detailed_placement_success}} {{
+        puts "LOG: 尝试简单合法化作为最后方案"
+        if {{[catch {{legalize_placement}} result]}} {{
+            puts "LOG: 合法化失败: $result"
+        }} else {{
+            puts "LOG: 合法化成功"
+            set detailed_placement_success 1
+        }}
+    }}
+}}
+
+# 最终状态报告
+if {{$detailed_placement_success}} {{
+    puts "LOG: 详细布局阶段成功完成"
+    puts "详细布局成功完成"
+}} else {{
+    puts "LOG: 详细布局阶段失败，但布局流程将继续"
+    puts "警告：详细布局失败，但布局流程将继续"
+    
+    # 保存失败信息用于调试
+    set failure_report [open "detailed_placement_failure.log" w]
+    puts $failure_report "详细布局失败报告"
+    puts $failure_report "时间: [clock format [clock seconds]]"
+    puts $failure_report "设计: [get_db current_design .name]"
+    puts $failure_report "放置率: $placement_ratio"
+    puts $failure_report "溢出状态: $has_overflow"
+    puts $failure_report "尝试次数: $max_attempts"
+    close $failure_report
+    puts "LOG: 失败报告已保存到 detailed_placement_failure.log"
+}}
+
+# 最终布局质量检查
+puts "LOG: 执行最终布局质量检查"
+if {{[catch {{report_placement_overflow}} final_overflow]}} {{
+    puts "LOG: 无法获取最终溢出信息"
+}} else {{
+    puts "LOG: 最终布局溢出报告:"
+    puts $final_overflow
+}}
+
+# 检查最终放置状态
+if {{[catch {{set final_placed [llength [get_placed_cells]]}} result]}} {{
+    puts "LOG: 无法获取最终放置状态"
+}} else {{
+    puts "LOG: 最终已放置实例: $final_placed/$total_count"
+    if {{$total_count > 0}} {{
+        set final_ratio [expr {{double($final_placed) / double($total_count)}}]
+        puts "LOG: 最终放置率: [expr {{$final_ratio * 100}}]%"
+    }}
+}}
 """
         
         # 保存TCL脚本到工作目录
@@ -472,7 +650,7 @@ puts "LOG: RL training data collection completed, log saved to: $log_file"
         with open(script_path, 'w') as f:
             f.write(tcl_script)
         
-        logger.info(f"TCL脚本已保存到: {script_path}")
+        logger.info(f"TCL脚本已保存到: {{script_path}}")
         return str(script_path)
     
     def run_iterative_placement(self, 
