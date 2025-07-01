@@ -2,6 +2,7 @@
 """
 增强的ISPD 2015批量训练脚本
 使用增强的容错机制和错误检查
+支持命令行参数指定输出目录
 """
 
 import os
@@ -9,6 +10,7 @@ import sys
 import time
 import logging
 import subprocess
+import argparse
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -37,19 +39,29 @@ logger = logging.getLogger(__name__)
 class EnhancedBatchTrainer:
     """增强的批量训练器，具有更强的容错机制"""
     
-    def __init__(self, config_path: str = "configs/experiment_config.json"):
+    def __init__(self, 
+                 config_path: str = "configs/experiment_config.json",
+                 results_dir: str = "results/iterative_training",
+                 data_dir: str = "data/designs/ispd_2015_contest_benchmark",
+                 num_iterations: int = 10):
         """初始化增强批量训练器
         
         Args:
             config_path: 配置文件路径
+            results_dir: 结果输出目录
+            data_dir: 数据目录
+            num_iterations: 迭代次数
         """
         # 加载配置
         config_loader = ConfigLoader()
         self.config = config_loader.load_config("experiment_config.json")
         
         # 设置路径
-        self.data_dir = Path("data/designs/ispd_2015_contest_benchmark")
-        self.results_dir = Path("results/iterative_training")
+        self.data_dir = Path(data_dir)
+        self.results_dir = Path(results_dir)
+        self.num_iterations = num_iterations
+        
+        # 创建结果目录
         self.results_dir.mkdir(parents=True, exist_ok=True)
         
         # 初始化统计
@@ -65,15 +77,19 @@ class EnhancedBatchTrainer:
         # 初始化OpenROAD接口
         self.openroad_interface = None
         
+        logger.info(f"增强批量训练器初始化完成")
+        logger.info(f"数据目录: {self.data_dir}")
+        logger.info(f"结果目录: {self.results_dir}")
+        logger.info(f"迭代次数: {self.num_iterations}")
+    
     def get_ispd_designs(self) -> List[Path]:
         """获取ISPD 2015基准测试设计列表"""
-        ispd_dir = Path("data/designs/ispd_2015_contest_benchmark")
-        if not ispd_dir.exists():
-            logger.error(f"ISPD目录不存在: {ispd_dir}")
+        if not self.data_dir.exists():
+            logger.error(f"数据目录不存在: {self.data_dir}")
             return []
         
         designs = []
-        for design_dir in ispd_dir.iterdir():
+        for design_dir in self.data_dir.iterdir():
             if design_dir.is_dir():
                 # 检查是否包含必要的文件
                 has_lef = any(design_dir.glob("*.lef"))
@@ -178,64 +194,72 @@ class EnhancedBatchTrainer:
             "output_dir": None
         }
         
-        try:
-            logger.info(f"开始训练设计: {design_name}")
-            
-            # 1. 预处理设计
-            if not self.preprocess_design(design_dir):
-                result["error"] = "预处理失败"
-                return result
-            
-            # 2. 为每个设计创建独立的OpenROAD接口
-            openroad_interface = RealOpenROADInterface(work_dir=str(design_dir))
-            
-            # 3. 运行迭代布局训练
-            logger.info(f"开始迭代布局训练，迭代次数: {self.config.get('num_iterations', 10)}")
-            
-            training_result = openroad_interface.run_iterative_placement(
-                num_iterations=self.config.get('num_iterations', 10)
-            )
-            
-            if training_result['success']:
-                logger.info(f"✅ 设计 {design_name} 训练成功")
-                
-                # 保存训练结果
-                result['success'] = True
-                result['output_dir'] = str(design_dir / "output")
-                result['iteration_data'] = training_result.get('iteration_data', [])
-                result['execution_time'] = training_result.get('execution_time', 0)
-                
-                # 提取最佳HPWL
-                best_hpwl = float('inf')
-                best_iteration = None
-                for i, iteration in enumerate(result['iteration_data']):
-                    hpwl = iteration.get('hpwl')
-                    if hpwl and hpwl != float('inf') and hpwl < best_hpwl:
-                        best_hpwl = hpwl
-                        best_iteration = i
-                
-                if best_hpwl != float('inf'):
-                    logger.info(f"   最佳HPWL: {best_hpwl:.2e} (轮次 {best_iteration})")
-                    result['best_hpwl'] = best_hpwl
-                    result['best_iteration'] = best_iteration
+        max_retries = 2  # 失败重试次数
+        base_timeout = 9000  # 默认超时时间（秒）
+        # 针对大设计动态调整初始超时
+        if ("superblue" in design_name.lower()) or ("matrix_mult" in design_name.lower()) or ("des_perf" in design_name.lower()):
+            base_timeout = 18000
+        
+        for attempt in range(max_retries + 1):
+            try:
+                logger.info(f"开始训练设计: {design_name} (第{attempt+1}次尝试, 超时: {base_timeout}秒)")
+                # 1. 预处理设计
+                if not self.preprocess_design(design_dir):
+                    result["error"] = "预处理失败"
+                    return result
+                # 2. 为每个设计创建独立的OpenROAD接口
+                openroad_interface = RealOpenROADInterface(work_dir=str(design_dir))
+                # 3. 运行迭代布局训练
+                logger.info(f"开始迭代布局训练，迭代次数: {self.num_iterations}")
+                training_result = openroad_interface.run_iterative_placement(
+                    num_iterations=self.num_iterations,
+                    timeout=base_timeout
+                )
+                if training_result['success']:
+                    logger.info(f"✅ 设计 {design_name} 训练成功")
+                    # 保存训练结果
+                    result['success'] = True
+                    result['output_dir'] = str(design_dir / "output")
+                    result['iteration_data'] = training_result.get('iteration_data', [])
+                    result['execution_time'] = training_result.get('execution_time', 0)
+                    # 提取最佳HPWL
+                    best_hpwl = float('inf')
+                    best_iteration = None
+                    for i, iteration in enumerate(result['iteration_data']):
+                        hpwl = iteration.get('hpwl')
+                        if hpwl and hpwl != float('inf') and hpwl < best_hpwl:
+                            best_hpwl = hpwl
+                            best_iteration = i
+                    if best_hpwl != float('inf'):
+                        logger.info(f"   最佳HPWL: {best_hpwl:.2e} (轮次 {best_iteration})")
+                        result['best_hpwl'] = best_hpwl
+                        result['best_iteration'] = best_iteration
+                    else:
+                        logger.warning(f"   未能提取到有效HPWL")
+                        result['best_hpwl'] = None
+                        result['best_iteration'] = None
+                    break  # 成功则跳出重试循环
                 else:
-                    logger.warning(f"   未能提取到有效HPWL")
-                    result['best_hpwl'] = None
-                    result['best_iteration'] = None
-                
-            else:
-                logger.error(f"❌ 设计 {design_name} 训练失败: {training_result.get('error', '未知错误')}")
-                result['error'] = training_result.get('error', '训练失败')
-                result['success'] = False
-            
-        except Exception as e:
-            result["error"] = str(e)
-            logger.error(f"训练设计 {design_name} 时发生异常: {e}")
-        
-        finally:
-            result["end_time"] = time.time()
-            result["duration"] = result["end_time"] - result["start_time"]
-        
+                    logger.error(f"❌ 设计 {design_name} 训练失败: {training_result.get('error', '未知错误')}")
+                    result['error'] = training_result.get('error', '训练失败')
+                    result['success'] = False
+                    if attempt < max_retries:
+                        logger.warning(f"设计 {design_name} 第{attempt+1}次训练失败，准备重试...（下次超时: {int(base_timeout*1.5)}秒）")
+                        base_timeout = int(base_timeout * 1.5)
+                        time.sleep(10)  # 重试前短暂等待
+                    else:
+                        logger.error(f"设计 {design_name} 多次重试后仍失败，放弃。")
+            except Exception as e:
+                result["error"] = str(e)
+                logger.error(f"训练设计 {design_name} 时发生异常: {e}")
+                if attempt < max_retries:
+                    logger.warning(f"设计 {design_name} 第{attempt+1}次异常，准备重试...（下次超时: {int(base_timeout*1.5)}秒）")
+                    base_timeout = int(base_timeout * 1.5)
+                    time.sleep(10)
+                else:
+                    logger.error(f"设计 {design_name} 多次重试后仍异常，放弃。")
+        result["end_time"] = time.time()
+        result["duration"] = result["end_time"] - result["start_time"]
         return result
     
     def run_batch_training(self, max_workers: int = 4) -> Dict[str, Any]:
@@ -377,14 +401,85 @@ class EnhancedBatchTrainer:
 
 def main():
     """主函数"""
+    # 创建命令行参数解析器
+    parser = argparse.ArgumentParser(
+        description="增强的ISPD 2015批量训练脚本",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例用法:
+  # 使用默认参数
+  python batch_train_ispd_enhanced.py
+  
+  # 指定输出目录
+  python batch_train_ispd_enhanced.py --results-dir results/openroad_default
+  
+  # 指定数据目录和迭代次数
+  python batch_train_ispd_enhanced.py --data-dir data/designs/ispd_2015_contest_benchmark --num-iterations 10
+  
+  # 完整参数示例
+  python batch_train_ispd_enhanced.py --results-dir results/openroad_default --data-dir data/designs/ispd_2015_contest_benchmark --num-iterations 10 --max-workers 2
+        """
+    )
+    
+    parser.add_argument(
+        "--results-dir", 
+        type=str, 
+        default="results/iterative_training",
+        help="结果输出目录 (默认: results/iterative_training)"
+    )
+    
+    parser.add_argument(
+        "--data-dir", 
+        type=str, 
+        default="data/designs/ispd_2015_contest_benchmark",
+        help="数据目录 (默认: data/designs/ispd_2015_contest_benchmark)"
+    )
+    
+    parser.add_argument(
+        "--num-iterations", 
+        type=int, 
+        default=10,
+        help="迭代次数 (默认: 10)"
+    )
+    
+    parser.add_argument(
+        "--max-workers", 
+        type=int, 
+        default=2,
+        help="最大并发工作线程数 (默认: 2)"
+    )
+    
+    parser.add_argument(
+        "--config", 
+        type=str, 
+        default="configs/experiment_config.json",
+        help="配置文件路径 (默认: configs/experiment_config.json)"
+    )
+    
+    # 解析命令行参数
+    args = parser.parse_args()
+    
+    logger.info("=== 增强批量训练脚本启动 ===")
+    logger.info(f"结果目录: {args.results_dir}")
+    logger.info(f"数据目录: {args.data_dir}")
+    logger.info(f"迭代次数: {args.num_iterations}")
+    logger.info(f"最大并发数: {args.max_workers}")
+    logger.info(f"配置文件: {args.config}")
+    
     # 创建增强批量训练器
-    trainer = EnhancedBatchTrainer()
+    trainer = EnhancedBatchTrainer(
+        config_path=args.config,
+        results_dir=args.results_dir,
+        data_dir=args.data_dir,
+        num_iterations=args.num_iterations
+    )
     
     # 运行批量训练
-    results = trainer.run_batch_training(max_workers=2)  # 使用2个并发线程
+    results = trainer.run_batch_training(max_workers=args.max_workers)
     
     if results["stats"]["successful"] > 0:
         logger.info("✅ 批量训练完成，有成功的设计")
+        logger.info(f"结果已保存到: {args.results_dir}")
         return 0
     else:
         logger.error("❌ 批量训练失败，没有成功的设计")

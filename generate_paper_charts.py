@@ -10,9 +10,16 @@ import seaborn as sns
 from matplotlib import rcParams
 import json
 import os
+import matplotlib.font_manager as fm
+from graphviz import Digraph
 
-# 设置中文字体
-plt.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS', 'DejaVu Sans']
+# 自动检测并设置可用的中文字体，彻底解决中文乱码
+zh_fonts = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'STHeiti', 'Heiti TC', 'PingFang SC', 'WenQuanYi Zen Hei']
+avail_fonts = set(f.name for f in fm.fontManager.ttflist)
+for font in zh_fonts:
+    if font in avail_fonts:
+        plt.rcParams['font.sans-serif'] = [font]
+        break
 plt.rcParams['axes.unicode_minus'] = False
 
 # 设置图表样式
@@ -46,12 +53,12 @@ def create_hpwl_improvement_chart():
     
     fig, ax = plt.subplots(figsize=(12, 8))
     
-    bars1 = ax.bar(x - width/2, baseline_hpwls, width, label='基线HPWL', color='lightcoral', alpha=0.8)
-    bars2 = ax.bar(x + width/2, optimized_hpwls, width, label='优化HPWL', color='lightblue', alpha=0.8)
+    bars1 = ax.bar(x - width/2, baseline_hpwls, width, label='Baseline HPWL', color='lightcoral', alpha=0.8)
+    bars2 = ax.bar(x + width/2, optimized_hpwls, width, label='Optimized HPWL', color='lightblue', alpha=0.8)
     
-    ax.set_xlabel('设计实例', fontsize=14)
-    ax.set_ylabel('HPWL (百万单位)', fontsize=14)
-    ax.set_title('HPWL改进效果对比', fontsize=16, fontweight='bold')
+    ax.set_xlabel('Design', fontsize=14)
+    ax.set_ylabel('HPWL (Millions)', fontsize=14)
+    ax.set_title('HPWL Improvement Comparison', fontsize=16, fontweight='bold')
     ax.set_xticks(x)
     ax.set_xticklabels([d.replace('mgc_', '').replace('_', '\n') for d in designs], fontsize=10)
     ax.legend(fontsize=12)
@@ -90,9 +97,9 @@ def create_improvement_rate_chart():
     
     bars = ax.bar(range(len(valid_designs)), valid_rates, color='skyblue', alpha=0.8)
     
-    ax.set_xlabel('设计实例', fontsize=14)
-    ax.set_ylabel('HPWL改进率 (%)', fontsize=14)
-    ax.set_title('各设计HPWL改进率', fontsize=16, fontweight='bold')
+    ax.set_xlabel('Design', fontsize=14)
+    ax.set_ylabel('HPWL Improvement Rate (%)', fontsize=14)
+    ax.set_title('HPWL Improvement Rate by Design', fontsize=16, fontweight='bold')
     ax.set_xticks(range(len(valid_designs)))
     ax.set_xticklabels([d.replace('mgc_', '').replace('_', '\n') for d in valid_designs], fontsize=10)
     
@@ -103,7 +110,7 @@ def create_improvement_rate_chart():
     
     # 添加平均线
     avg_rate = np.mean(valid_rates)
-    ax.axhline(y=avg_rate, color='red', linestyle='--', linewidth=2, label=f'平均改进率: {avg_rate:.2f}%')
+    ax.axhline(y=avg_rate, color='red', linestyle='--', linewidth=2, label=f'Average Improvement Rate: {avg_rate:.2f}%')
     ax.legend(fontsize=12)
     
     plt.tight_layout()
@@ -125,9 +132,9 @@ def create_execution_time_chart():
     
     # 柱状图
     bars = ax1.bar(range(len(designs)), execution_times, color='lightgreen', alpha=0.8)
-    ax1.set_xlabel('设计实例', fontsize=12)
-    ax1.set_ylabel('执行时间 (秒)', fontsize=12)
-    ax1.set_title('各设计执行时间', fontsize=14, fontweight='bold')
+    ax1.set_xlabel('Design', fontsize=12)
+    ax1.set_ylabel('Execution Time (s)', fontsize=12)
+    ax1.set_title('Execution Time by Design', fontsize=14, fontweight='bold')
     ax1.set_xticks(range(len(designs)))
     ax1.set_xticklabels([d.replace('mgc_', '').replace('_', '\n') for d in designs], fontsize=9)
     
@@ -144,7 +151,7 @@ def create_execution_time_chart():
     colors = plt.cm.Set3(np.linspace(0, 1, len(designs)))
     wedges, texts, autotexts = ax2.pie(execution_times, labels=labels, autopct='%1.1f%%', 
                                        colors=colors, startangle=90)
-    ax2.set_title('执行时间分布', fontsize=14, fontweight='bold')
+    ax2.set_title('Execution Time Distribution', fontsize=14, fontweight='bold')
     
     plt.tight_layout()
     plt.savefig('results/paper_method_validation/execution_time_analysis.png', dpi=300, bbox_inches='tight')
@@ -155,7 +162,7 @@ def create_method_comparison_chart():
     data = load_validation_data()
     comparison = data['comparison_analysis']
     
-    methods = ['动态重排序', '实体增强', '质量反馈']
+    methods = ['Dynamic Reranking', 'Entity Enhancement', 'Quality Feedback']
     improvement_rates = [
         comparison['improvement_rates']['dynamic_reranking'],
         comparison['improvement_rates']['entity_enhancement'],
@@ -174,9 +181,9 @@ def create_method_comparison_chart():
     
     # 改进率对比
     bars1 = ax1.bar(x, improvement_rates, width, color='lightblue', alpha=0.8)
-    ax1.set_xlabel('方法', fontsize=12)
-    ax1.set_ylabel('HPWL改进率 (%)', fontsize=12)
-    ax1.set_title('各方法HPWL改进率对比', fontsize=14, fontweight='bold')
+    ax1.set_xlabel('Method', fontsize=12)
+    ax1.set_ylabel('HPWL Improvement Rate (%)', fontsize=12)
+    ax1.set_title('HPWL Improvement by Method', fontsize=14, fontweight='bold')
     ax1.set_xticks(x)
     ax1.set_xticklabels(methods, fontsize=11)
     
@@ -186,9 +193,9 @@ def create_method_comparison_chart():
     
     # 成功率对比
     bars2 = ax2.bar(x, success_rates, width, color='lightgreen', alpha=0.8)
-    ax2.set_xlabel('方法', fontsize=12)
-    ax2.set_ylabel('成功率 (%)', fontsize=12)
-    ax2.set_title('各方法成功率对比', fontsize=14, fontweight='bold')
+    ax2.set_xlabel('Method', fontsize=12)
+    ax2.set_ylabel('Success Rate (%)', fontsize=12)
+    ax2.set_title('Success Rate by Method', fontsize=14, fontweight='bold')
     ax2.set_xticks(x)
     ax2.set_xticklabels(methods, fontsize=11)
     ax2.set_ylim(0, 110)
@@ -224,15 +231,94 @@ def create_iteration_analysis_chart():
                marker=markers[i], linewidth=2, markersize=8, 
                label=design_name, color=colors[i])
     
-    ax.set_xlabel('迭代轮次', fontsize=14)
-    ax.set_ylabel('HPWL (百万单位)', fontsize=14)
-    ax.set_title('质量反馈驱动的迭代优化过程', fontsize=16, fontweight='bold')
+    ax.set_xlabel('Iteration', fontsize=14)
+    ax.set_ylabel('HPWL (Millions)', fontsize=14)
+    ax.set_title('Iterative Optimization Driven by Quality Feedback', fontsize=16, fontweight='bold')
     ax.legend(fontsize=12)
     ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
     plt.savefig('results/paper_method_validation/iteration_analysis.png', dpi=300, bbox_inches='tight')
     plt.close()
+
+def create_chip_d_rag_framework_diagram():
+    dot = Digraph('Chip-D-RAG-Framework', format='png')
+    dot.attr(rankdir='LR', size='10,6')
+    dot.attr('node', shape='box', style='filled', fontname='Arial', fontsize='12')
+
+    # 输入
+    dot.node('Input', 'Design Query / Input', fillcolor='#f9f')
+
+    # 知识库分组
+    with dot.subgraph(name='cluster_kb') as kb:
+        kb.attr(label='Knowledge Base', style='filled', color='#bbf', fillcolor='#eef')
+        kb.node('Case', 'Case Retrieval', fillcolor='#bbf')
+        kb.node('Constraint', 'Constraint DB', fillcolor='#bbf')
+
+    # 动态检索分组
+    with dot.subgraph(name='cluster_retriever') as retr:
+        retr.attr(label='Dynamic Retriever', style='filled', color='#ffd700', fillcolor='#fff8dc')
+        retr.node('RL', 'RL Agent', fillcolor='#ffd700')
+        retr.node('Sim', 'Similarity Calculation', fillcolor='#ffd700')
+
+    # 实体增强分组
+    with dot.subgraph(name='cluster_entity') as ent:
+        ent.attr(label='Entity Enhancement', style='filled', color='#90ee90', fillcolor='#eaffea')
+        ent.node('Extract', 'Entity Extraction', fillcolor='#90ee90')
+        ent.node('Compress', 'Compression', fillcolor='#90ee90')
+        ent.node('Inject', 'Injection', fillcolor='#90ee90')
+
+    # 多模态融合
+    with dot.subgraph(name='cluster_multi') as multi:
+        multi.attr(label='Multimodal Fusion', style='filled', color='#87ceeb', fillcolor='#e6f7ff')
+        multi.node('Text', 'Text', fillcolor='#87ceeb')
+        multi.node('Image', 'Image', fillcolor='#87ceeb')
+        multi.node('Struct', 'Structured Data', fillcolor='#87ceeb')
+
+    # 布局生成
+    dot.node('Gen', 'Layout Generator', fillcolor='#ffa07a')
+
+    # 质量评估分组
+    with dot.subgraph(name='cluster_eval') as eval:
+        eval.attr(label='Quality Evaluator', style='filled', color='#ffb347', fillcolor='#fff5e6')
+        eval.node('HPWL', 'HPWL', fillcolor='#ffb347')
+        eval.node('Cong', 'Congestion', fillcolor='#ffb347')
+        eval.node('Timing', 'Timing', fillcolor='#ffb347')
+        eval.node('Power', 'Power', fillcolor='#ffb347')
+
+    # 反馈闭环
+    with dot.subgraph(name='cluster_fb') as fb:
+        fb.attr(label='Feedback Loop', style='filled', color='#b0e0e6', fillcolor='#e0f7fa')
+        fb.node('Policy', 'Policy Update', fillcolor='#b0e0e6')
+        fb.node('Signal', 'Quality Signal', fillcolor='#b0e0e6')
+
+    # 箭头连接
+    dot.edge('Input', 'Case')
+    dot.edge('Input', 'Constraint')
+    dot.edge('Case', 'RL')
+    dot.edge('Constraint', 'RL')
+    dot.edge('RL', 'Sim')
+    dot.edge('Sim', 'Extract')
+    dot.edge('Extract', 'Compress')
+    dot.edge('Compress', 'Inject')
+    dot.edge('Inject', 'Text')
+    dot.edge('Inject', 'Image')
+    dot.edge('Inject', 'Struct')
+    dot.edge('Text', 'Gen')
+    dot.edge('Image', 'Gen')
+    dot.edge('Struct', 'Gen')
+    dot.edge('Gen', 'HPWL')
+    dot.edge('Gen', 'Cong')
+    dot.edge('Gen', 'Timing')
+    dot.edge('Gen', 'Power')
+    dot.edge('HPWL', 'Policy', label='Quality')
+    dot.edge('Cong', 'Policy')
+    dot.edge('Timing', 'Policy')
+    dot.edge('Power', 'Policy')
+    dot.edge('Policy', 'RL', color='red', label='Feedback')
+    dot.edge('Policy', 'Signal')
+
+    dot.render('results/paper_method_validation/chip_d_rag_framework', view=False)
 
 def main():
     """主函数"""
@@ -243,19 +329,22 @@ def main():
     
     # 生成各种图表
     create_hpwl_improvement_chart()
-    print("✓ HPWL改进对比图已生成")
+    print("✓ HPWL Improvement Comparison已生成")
     
     create_improvement_rate_chart()
-    print("✓ 改进率对比图已生成")
+    print("✓ HPWL Improvement Rate Comparison已生成")
     
     create_execution_time_chart()
-    print("✓ 执行时间分析图已生成")
+    print("✓ Execution Time Analysis已生成")
     
     create_method_comparison_chart()
-    print("✓ 方法对比图已生成")
+    print("✓ Method Comparison已生成")
     
     create_iteration_analysis_chart()
-    print("✓ 迭代优化分析图已生成")
+    print("✓ Iteration Analysis已生成")
+    
+    create_chip_d_rag_framework_diagram()
+    print('✓ Chip-D-RAG Framework Diagram generated!')
     
     print("\n所有图表已生成完成！")
     print("图表保存在: results/paper_method_validation/")

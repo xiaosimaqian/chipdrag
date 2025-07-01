@@ -172,7 +172,7 @@ if {{[file exists floorplan.def]}} {{
     read_def floorplan.def
     
     # 然后读取Verilog文件并连接设计
-    read_verilog {self.verilog_file.name}
+read_verilog {self.verilog_file.name}
     link_design {top_module}
     
     # 智能扩展芯片面积
@@ -501,7 +501,7 @@ puts "布局实例数: $final_placed_count/$final_total_count"
     def _extract_metrics_from_log(self) -> Dict[str, Any]:
         """
         从OpenROAD执行日志中提取关键指标
-        
+            
         Returns:
             提取的指标字典
         """
@@ -918,56 +918,86 @@ foreach inst $insts {{
 }}
 puts "LOG: All cells unplaced, starting RL training iterations"
 
-for {{set i 1}} {{$i <= $num_iterations}} {{incr i}} {{
-    puts "LOG: Starting RL training iteration $i"
-    puts $log_fp "=== RL Training Iteration $i ==="
-    # 直接使用传入参数
+for {{set iteration 1}} {{$iteration <= $num_iterations}} {{incr iteration}} {{
+    puts "LOG: Starting RL training iteration $iteration"
+    puts $log_fp "=== RL Training Iteration $iteration ==="
+    
+    # 第一次运行：使用默认参数（OpenROAD标准参数）
+    puts "LOG: Running with default OpenROAD parameters"
+    if {{[catch {{global_placement}} result]}} {{
+        puts "LOG: Default global placement failed in iteration $iteration: $result"
+        puts $log_fp "Iteration $iteration: Default global placement failed: $result"
+    }} else {{
+        puts "LOG: Default global placement completed"
+    }}
+    if {{[catch {{detailed_placement}} result]}} {{
+        puts "LOG: Default detailed placement failed in iteration $iteration: $result"
+        puts $log_fp "Iteration $iteration: Default detailed placement failed: $result"
+    }} else {{
+        puts "LOG: Default detailed placement completed"
+    }}
+    
+    # 保存默认参数的结果
+    set def_filename_default "$output_dir/iterations/iteration_${{iteration}}.def"
+    write_def $def_filename_default
+    puts "LOG: Default layout saved to: $def_filename_default"
+    puts $log_fp "Default DEF file: $def_filename_default"
+    
+    # 第二次运行：使用传入的优化参数（ChipDRAG参数）
+    puts "LOG: Running with ChipDRAG optimized parameters"
     set cur_density $density_target
     set cur_wirelength_weight $wirelength_weight
     set cur_density_weight $density_weight
     if {{[catch {{global_placement -density $cur_density -init_wirelength_coef $cur_wirelength_weight -init_density_penalty $cur_density_weight}} result]}} {{
-        puts "LOG: Global placement failed in iteration $i: $result"
-        puts $log_fp "Iteration $i: Global placement failed: $result"
-        continue
-    }}
-    if {{[catch {{detailed_placement -max_displacement 2 -max_iterations 5}} result]}} {{
-        puts "LOG: Detailed placement failed in iteration $i: $result"
-        puts $log_fp "Iteration $i: Detailed placement failed: $result"
-    }}
-    puts "LOG: Starting pin placement optimization for iteration $i"
-    if {{[catch {{place_pins -random}} result]}} {{
-        puts "LOG: Pin placement failed in iteration $i: $result"
-        puts $log_fp "Iteration $i: Pin placement failed: $result"
+        puts "LOG: Optimized global placement failed in iteration $iteration: $result"
+        puts $log_fp "Iteration $iteration: Optimized global placement failed: $result"
     }} else {{
-        puts "LOG: Pin placement completed for iteration $i"
-        puts $log_fp "Iteration $i: Pin placement completed"
+        puts "LOG: Optimized global placement completed"
     }}
-    set def_filename "$output_dir/iterations/iteration_${i}_rl_training.def"
-    write_def $def_filename
-    puts "LOG: RL training layout saved to: $def_filename"
-    puts $log_fp "DEF file: $def_filename"
+    if {{[catch {{detailed_placement}} result]}} {{
+        puts "LOG: Optimized detailed placement failed in iteration $iteration: $result"
+        puts $log_fp "Iteration $iteration: Optimized detailed placement failed: $result"
+    }} else {{
+        puts "LOG: Optimized detailed placement completed"
+    }}
+    
+    puts "LOG: Starting pin placement optimization for iteration $iteration"
+    if {{[catch {{place_pins -hor_layers 2 -ver_layers 2}} result]}} {{
+        puts "LOG: Pin placement failed in iteration $iteration: $result"
+        puts $log_fp "Iteration $iteration: Pin placement failed: $result"
+    }} else {{
+        puts "LOG: Pin placement completed for iteration $iteration"
+        puts $log_fp "Iteration $iteration: Pin placement completed"
+    }}
+    
+    # 保存优化参数的结果
+    set def_filename_optimized "$output_dir/iterations/iteration_${{iteration}}_rl_training.def"
+    write_def $def_filename_optimized
+    puts "LOG: Optimized layout saved to: $def_filename_optimized"
+    puts $log_fp "Optimized DEF file: $def_filename_optimized"
+    
     puts "LOG: Collecting RL training metrics"
-    set hpwl_report_file "$output_dir/iterations/iteration_${i}_hpwl.rpt"
-    if {{[catch {{report_wire_length -net}} result]}} {{
+    set hpwl_report_file "$output_dir/iterations/iteration_${{iteration}}_hpwl.rpt"
+    if {{[catch {{report_wire_length}} result]}} {{
         puts "LOG: Cannot get HPWL information: $result"
-        puts $log_fp "Iteration $i: HPWL=unavailable"
+        puts $log_fp "Iteration $iteration: HPWL=unavailable"
     }} else {{
         set hpwl_fp [open $hpwl_report_file w]
         puts $hpwl_fp $result
         close $hpwl_fp
         puts "LOG: HPWL report saved to: $hpwl_report_file"
-        puts $log_fp "Iteration $i: HPWL report saved"
+        puts $log_fp "Iteration $iteration: HPWL report saved"
     }}
-    set overflow_report_file "$output_dir/iterations/iteration_${i}_overflow.rpt"
-    if {{[catch {{report_placement_overflow}} result]}} {{
-        puts "LOG: Cannot get overflow information: $result"
-        puts $log_fp "Iteration $i: Overflow=unavailable"
+    set overflow_report_file "$output_dir/iterations/iteration_${{iteration}}_overflow.rpt"
+    if {{[catch {{report_placement}} result]}} {{
+        puts "LOG: Cannot get placement information: $result"
+        puts $log_fp "Iteration $iteration: Placement info=unavailable"
     }} else {{
         set overflow_fp [open $overflow_report_file w]
         puts $overflow_fp $result
         close $overflow_fp
-        puts "LOG: Overflow report saved to: $overflow_report_file"
-        puts $log_fp "Iteration $i: Overflow report saved"
+        puts "LOG: Placement report saved to: $overflow_report_file"
+        puts $log_fp "Iteration $iteration: Placement report saved"
     }}
     puts $log_fp "---"
 }}
@@ -1109,7 +1139,7 @@ puts "LOG: RL training data collection completed"
         return iteration_data
 
     def run_openroad_command(self, tcl_file: str, timeout: int = None) -> tuple[bool, str, str]:
-        """运行OpenROAD命令"""
+        """运行OpenROAD命令，支持实时日志收集"""
         try:
             # 计算超时时间
             if timeout is None:
@@ -1124,40 +1154,121 @@ puts "LOG: RL training data collection completed"
             
             print(f"执行Docker命令: {docker_cmd}")
             
-            # 执行命令
-            result = subprocess.run(
-                docker_cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                cwd=self.work_dir
-            )
-            
-            success = result.returncode == 0
-            stdout = result.stdout
-            stderr = result.stderr
-            
             # 保存执行日志
             log_file = os.path.join(self.work_dir, "openroad_execution.log")
-            with open(log_file, 'w') as f:
-                f.write("=== OpenROAD Execution Log ===\n")
-                f.write(f"Command: {docker_cmd}\n")
-                f.write(f"Return Code: {result.returncode}\n")
-                f.write("=== STDOUT ===\n")
-                f.write(stdout)
-                f.write("\n=== STDERR ===\n")
-                f.write(stderr)
-                f.write("\n=== END ===\n")
             
-            print(f"OpenROAD执行日志已保存到: {log_file}")
+            # 使用Popen进行实时日志收集
+            process = subprocess.Popen(
+                docker_cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=self.work_dir,
+                bufsize=1,
+                universal_newlines=True
+            )
+            
+            stdout_lines = []
+            stderr_lines = []
+            
+            # 实时收集日志
+            with open(log_file, 'w') as log_f:
+                log_f.write("=== OpenROAD Execution Log ===\n")
+                log_f.write(f"Command: {docker_cmd}\n")
+                log_f.write(f"Start Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                log_f.write("=== REAL-TIME OUTPUT ===\n")
+                
+                start_time = time.time()
+                
+                try:
+                    import select
+                    import sys
+                    
+                    while True:
+                        # 检查是否超时
+                        if time.time() - start_time > timeout:
+                            print(f"⚠️  OpenROAD执行超时 ({timeout}秒)，强制终止进程")
+                            process.terminate()
+                            try:
+                                process.wait(timeout=30)  # 等待进程结束
+                            except subprocess.TimeoutExpired:
+                                process.kill()  # 强制杀死进程
+                            break
+                        
+                        # 检查进程是否结束
+                        if process.poll() is not None:
+                            break
+                        
+                        # 非阻塞读取输出
+                        reads = [process.stdout.fileno(), process.stderr.fileno()]
+                        ret = select.select(reads, [], [], 1.0)[0]  # 1秒超时
+                        
+                        for fd in ret:
+                            if fd == process.stdout.fileno():
+                                line = process.stdout.readline()
+                                if line:
+                                    line = line.rstrip()
+                                    stdout_lines.append(line)
+                                    # 实时输出到终端（带时间戳）
+                                    timestamp = time.strftime('%H:%M:%S')
+                                    print(f"[{timestamp}] {line}")
+                                    log_f.write(f"[{timestamp}] {line}\n")
+                                    log_f.flush()  # 立即写入文件
+                                    
+                            elif fd == process.stderr.fileno():
+                                line = process.stderr.readline()
+                                if line:
+                                    line = line.rstrip()
+                                    stderr_lines.append(line)
+                                    # 实时输出错误到终端（带时间戳和错误标识）
+                                    timestamp = time.strftime('%H:%M:%S')
+                                    print(f"[{timestamp}] ERROR: {line}")
+                                    log_f.write(f"[{timestamp}] ERROR: {line}\n")
+                                    log_f.flush()  # 立即写入文件
+                
+                except KeyboardInterrupt:
+                    print("\n⚠️  用户中断，正在终止OpenROAD进程...")
+                    process.terminate()
+                    try:
+                        process.wait(timeout=30)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                    raise
+                
+                # 等待进程结束并获取返回码
+                return_code = process.wait()
+                success = return_code == 0
+                
+                # 记录结束信息
+                end_time = time.strftime('%Y-%m-%d %H:%M:%S')
+                duration = time.time() - start_time
+                
+                log_f.write(f"\n=== EXECUTION SUMMARY ===\n")
+                log_f.write(f"End Time: {end_time}\n")
+                log_f.write(f"Duration: {duration:.2f} seconds\n")
+                log_f.write(f"Return Code: {return_code}\n")
+                log_f.write(f"Success: {success}\n")
+                log_f.write("=== END ===\n")
+            
+            stdout = '\n'.join(stdout_lines)
+            stderr = '\n'.join(stderr_lines)
+            
+            print(f"✅ OpenROAD执行完成，耗时: {duration:.2f}秒，返回码: {return_code}")
+            print(f"📄 详细日志已保存到: {log_file}")
             
             if not success:
-                print(f"OpenROAD命令执行失败: {stderr}")
+                print(f"❌ OpenROAD命令执行失败，返回码: {return_code}")
+                if stderr:
+                    print(f"错误信息: {stderr}")
             
             return success, stdout, stderr
+            
+        except subprocess.TimeoutExpired:
+            print(f"❌ OpenROAD执行超时 ({timeout}秒)")
+            return False, "", f"执行超时 ({timeout}秒)"
         except Exception as e:
-            print(f"OpenROAD命令执行失败: {e}")
+            print(f"❌ OpenROAD命令执行异常: {e}")
             return False, "", str(e)
 
     def _calculate_optimal_area_and_density(self) -> tuple[tuple[int, int], float]:
