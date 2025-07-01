@@ -5,6 +5,7 @@
 
 import re
 import sys
+import argparse
 from pathlib import Path
 
 def parse_def_file(def_file):
@@ -89,18 +90,52 @@ def calculate_hpwl(components, nets):
     return total_hpwl, valid_nets, total_nets
 
 def main():
-    if len(sys.argv) != 2:
-        print("Usage: python calculate_hpwl.py <def_file>")
-        sys.exit(1)
+    """主函数"""
+    parser = argparse.ArgumentParser(description='从DEF文件中计算HPWL (Half-Perimeter Wire Length)')
+    parser.add_argument('def_file', help='输入的DEF文件路径')
     
-    def_file = sys.argv[1]
-    if not Path(def_file).exists():
-        print(f"Error: File {def_file} not found")
+    if len(sys.argv) == 1:
+        parser.print_help()
+        return
+    
+    args = parser.parse_args()
+    
+    def_file = Path(args.def_file)
+    if not def_file.exists():
+        print(f"Error: DEF文件不存在: {def_file}")
         sys.exit(1)
     
     try:
+        # 解析DEF文件
         components, nets = parse_def_file(def_file)
-        hpwl, valid_nets, total_nets = calculate_hpwl(components, nets)
+        
+        # 计算HPWL
+        hpwl = 0
+        total_nets = len(nets)
+        valid_nets = 0
+        
+        for net_name, net_components in nets.items():
+            if len(net_components) < 2:
+                continue
+                
+            valid_nets += 1
+            
+            # 计算这个网络的边界框
+            x_coords = []
+            y_coords = []
+            
+            for comp_name in net_components:
+                if comp_name in components:
+                    x, y = components[comp_name]
+                    x_coords.append(x)
+                    y_coords.append(y)
+            
+            if x_coords and y_coords:
+                # 计算边界框的周长
+                min_x, max_x = min(x_coords), max(x_coords)
+                min_y, max_y = min(y_coords), max(y_coords)
+                net_hpwl = (max_x - min_x) + (max_y - min_y)
+                hpwl += net_hpwl
         
         print(f"\nResults:")
         print(f"Total HPWL: {hpwl}")

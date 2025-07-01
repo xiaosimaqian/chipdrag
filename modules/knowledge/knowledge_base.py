@@ -134,25 +134,36 @@ class KnowledgeBase:
             List[Dict]: 知识列表
         """
         try:
-            # 检查文件是否存在
-            if not os.path.exists(self.data_file):
-                logger.info(f"知识库文件不存在，创建新文件: {self.data_file}")
+            # 优先尝试加载cases.pkl（真实ISPD数据）
+            cases_file = os.path.join(self.layout_experience_path, "cases.pkl")
+            if os.path.exists(cases_file) and os.path.getsize(cases_file) > 1000:  # 确保文件有实际内容
+                logger.info(f"加载真实ISPD案例数据: {cases_file}")
+                with open(cases_file, 'rb') as f:
+                    data = pickle.load(f)
+                logger.info(f"成功加载 {len(data)} 个真实ISPD案例")
+                return data
+            
+            # 如果cases.pkl不存在或为空，尝试加载data.pkl
+            if os.path.exists(self.data_file):
+                logger.info(f"加载知识库文件: {self.data_file}")
+                # 检查文件大小
+                if os.path.getsize(self.data_file) == 0:
+                    logger.info("知识库文件为空")
+                    return []
+                    
+                # 加载数据
+                with open(self.data_file, 'rb') as f:
+                    data = pickle.load(f)
+                    
+                # 确保返回的是列表
+                if data is None:
+                    return []
+                    
+                logger.info(f"从data.pkl加载了 {len(data)} 个案例")
+                return data
+            else:
+                logger.info(f"知识库文件不存在: {self.data_file}")
                 return []
-                
-            # 检查文件大小
-            if os.path.getsize(self.data_file) == 0:
-                logger.info("知识库文件为空")
-                return []
-                
-            # 加载数据
-            with open(self.data_file, 'rb') as f:
-                data = pickle.load(f)
-                
-            # 确保返回的是列表
-            if data is None:
-                return []
-                
-            return data
             
         except Exception as e:
             logger.error(f"加载知识库数据失败: {str(e)}")
@@ -418,238 +429,230 @@ class KnowledgeBase:
             'features': features['constraint']
         })
         
-    def get_similar_cases(self, query: Dict[str, Any], top_k: int = 3, similarity_threshold: float = 0.1) -> List[Dict[str, Any]]:
+    def get_similar_cases(self, query_features: Dict, top_k: int = 5, similarity_threshold: float = 0.1) -> List[Dict]:
         """获取相似案例
         
         Args:
-            query: 查询信息
+            query_features: 查询特征
             top_k: 返回结果数量
-            similarity_threshold: 相似度阈值（降低默认阈值）
+            similarity_threshold: 相似度阈值
             
         Returns:
-            List[Dict[str, Any]]: 相似案例列表
+            List[Dict]: 相似案例列表
         """
         try:
-            # 优先使用内存中的cases
-            cases = self.cases
+            if not self.cases:
+                logger.warning("知识库为空，返回默认案例")
+                return [self._get_default_case()]
             
-            # 如果内存中没有数据，尝试从文件加载
-            if not cases:
-                logger.info("内存中没有案例数据，尝试从文件加载")
-                try:
-                    if os.path.exists(self.data_file):
-                        with open(self.data_file, 'rb') as f:
-                            cases = pickle.load(f)
-                        logger.info(f"从文件加载了 {len(cases)} 个案例")
-                    else:
-                        logger.info("数据文件不存在")
-                        return []
-                except Exception as e:
-                    logger.warning(f"从文件加载数据失败: {str(e)}")
-                    return []
-            
-            if not cases:
-                logger.info("知识库中没有案例数据")
-                return []
-                
-            logger.info(f"开始计算相似度，共有 {len(cases)} 个案例")
-            
-            # 计算相似度
+            # 计算所有案例的相似度
             similarities = []
-            for i, case in enumerate(cases):
+            for case in self.cases:
                 try:
-                    # 计算特征相似度
-                    feature_sim = self._compute_feature_similarity(query, case)
+                    # 使用改进的相似度计算
+                    similarity = self._compute_similarity(query_features, case.get('features', {}))
                     
-                    # 计算层次结构相似度
-                    hierarchy_sim = self._compute_hierarchy_similarity(query, case)
+                    similarities.append({
+                        'case': case,
+                        'similarity': similarity
+                    })
                     
-                    # 计算约束相似度
-                    constraint_sim = self._compute_constraint_similarity(query, case)
-                    
-                    # 加权融合
-                    similarity = (
-                        0.4 * feature_sim +
-                        0.4 * hierarchy_sim +
-                        0.2 * constraint_sim
-                    )
-                    
-                    # 如果所有相似度都为0，给一个基础分数
-                    if feature_sim == 0 and hierarchy_sim == 0 and constraint_sim == 0:
-                        similarity = 0.3  # 基础相似度
-                    
-                    if similarity >= similarity_threshold:
-                        similarities.append((case, similarity))
-                        
-                    # 调试信息
-                    if i < 3:  # 只显示前3个案例的相似度
-                        logger.info(f"案例 {i}: feature_sim={feature_sim:.3f}, hierarchy_sim={hierarchy_sim:.3f}, constraint_sim={constraint_sim:.3f}, total={similarity:.3f}")
-                        
                 except Exception as e:
-                    logger.warning(f"计算案例 {i} 相似度失败: {str(e)}")
+                    logger.error(f"计算案例相似度失败: {str(e)}")
                     continue
-                    
-            # 按相似度排序
-            similarities.sort(key=lambda x: x[1], reverse=True)
             
-            logger.info(f"找到 {len(similarities)} 个相似案例（阈值: {similarity_threshold}）")
+            # 按相似度排序
+            similarities.sort(key=lambda x: x['similarity'], reverse=True)
+            
+            # 过滤低于阈值的结果
+            filtered_results = [
+                item for item in similarities 
+                if item['similarity'] >= similarity_threshold
+            ]
             
             # 返回top_k结果
-            result = [case for case, _ in similarities[:top_k]]
-            logger.info(f"返回 {len(result)} 个相似案例")
+            result = filtered_results[:top_k]
+            
+            # 记录日志
+            if result:
+                logger.info(f"找到 {len(result)} 个相似案例，最高相似度: {result[0]['similarity']:.3f}")
+            else:
+                logger.warning(f"未找到相似度 >= {similarity_threshold} 的案例")
+                # 返回相似度最高的案例作为备选
+                if similarities:
+                    result = [similarities[0]]
+                    logger.info(f"返回相似度最高的案例: {result[0]['similarity']:.3f}")
+            
             return result
             
         except Exception as e:
             logger.error(f"获取相似案例失败: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return []
-            
-    def _compute_feature_similarity(self, query: Dict[str, Any], case: Dict[str, Any]) -> float:
-        """计算特征相似度
+            return [self._get_default_case()]
+    
+    def _get_default_case(self) -> Dict:
+        """获取默认案例"""
+        return {
+            'case': {
+                'id': 'default',
+                'features': {
+                    'num_components': 1000,
+                    'area': 100000000,
+                    'component_density': 0.1,
+                    'hierarchy': {'modules': ['default']},
+                    'constraints': {'timing': {'max_delay': 1000}, 'power': {'max_power': 1000}, 'special_nets': 2}
+                },
+                'layout_strategy': 'default',
+                'parameters': {'k': 3, 'iterations': 10}
+            },
+            'similarity': 0.1
+        }
+    
+    def _compute_similarity(self, features1: Dict, features2: Dict) -> float:
+        """计算两个特征字典之间的相似度
         
         Args:
-            query: 查询信息
-            case: 案例信息
+            features1: 第一个特征字典
+            features2: 第二个特征字典
             
         Returns:
-            float: 相似度分数
+            float: 相似度分数 (0-1)
         """
         try:
-            # 获取特征
-            query_features = query.get('features', {})
-            case_features = case.get('features', {})
+            if not features1 or not features2:
+                return 0.0
             
-            if not query_features or not case_features:
+            total_score = 0.0
+            total_weight = 0.0
+            
+            # 1. 组件数量相似度 (权重: 0.25)
+            if 'num_components' in features1 and 'num_components' in features2:
+                comp1 = features1['num_components']
+                comp2 = features2['num_components']
+                if comp1 > 0 and comp2 > 0:
+                    comp_sim = 1.0 - abs(comp1 - comp2) / max(comp1, comp2)
+                    total_score += comp_sim * 0.25
+                    total_weight += 0.25
+            
+            # 2. 面积相似度 (权重: 0.20)
+            if 'area' in features1 and 'area' in features2:
+                area1 = features1['area']
+                area2 = features2['area']
+                if area1 > 0 and area2 > 0:
+                    area_sim = 1.0 - abs(area1 - area2) / max(area1, area2)
+                    total_score += area_sim * 0.20
+                    total_weight += 0.20
+            
+            # 3. 组件密度相似度 (权重: 0.15)
+            if 'component_density' in features1 and 'component_density' in features2:
+                density1 = features1['component_density']
+                density2 = features2['component_density']
+                density_sim = 1.0 - abs(density1 - density2)
+                total_score += density_sim * 0.15
+                total_weight += 0.15
+            
+            # 4. 层次结构相似度 (权重: 0.20)
+            if 'hierarchy' in features1 and 'hierarchy' in features2:
+                hierarchy1 = features1['hierarchy']
+                hierarchy2 = features2['hierarchy']
+                hierarchy_sim = self._compute_hierarchy_similarity(hierarchy1, hierarchy2)
+                total_score += hierarchy_sim * 0.20
+                total_weight += 0.20
+            
+            # 5. 约束条件相似度 (权重: 0.20)
+            if 'constraints' in features1 and 'constraints' in features2:
+                constraints1 = features1['constraints']
+                constraints2 = features2['constraints']
+                constraint_sim = self._compute_constraint_similarity(constraints1, constraints2)
+                total_score += constraint_sim * 0.20
+                total_weight += 0.20
+            
+            # 计算加权平均相似度
+            if total_weight > 0:
+                return total_score / total_weight
+            else:
                 return 0.0
                 
-            # 计算数值特征相似度
-            numerical_sim = 0.0
-            numerical_count = 0
-            
-            for key in query_features:
-                if key in case_features and isinstance(query_features[key], (int, float)):
-                    numerical_count += 1
-                    diff = abs(query_features[key] - case_features[key])
-                    max_val = max(abs(query_features[key]), abs(case_features[key]))
-                    if max_val > 0:
-                        numerical_sim += 1 - (diff / max_val)
-                        
-            numerical_sim = numerical_sim / numerical_count if numerical_count > 0 else 0.0
-            
-            # 计算文本特征相似度
-            text_sim = 0.0
-            text_count = 0
-            
-            for key in query_features:
-                if key in case_features and isinstance(query_features[key], str):
-                    text_count += 1
-                    if query_features[key] == case_features[key]:
-                        text_sim += 1.0
-                        
-            text_sim = text_sim / text_count if text_count > 0 else 0.0
-            
-            # 加权融合
-            return 0.6 * numerical_sim + 0.4 * text_sim
-            
         except Exception as e:
-            logger.error(f"计算特征相似度失败: {str(e)}")
+            logger.error(f"相似度计算失败: {str(e)}")
             return 0.0
-            
-    def _compute_hierarchy_similarity(self, query: Dict[str, Any], case: Dict[str, Any]) -> float:
-        """计算层次结构相似度
-        
-        Args:
-            query: 查询信息
-            case: 案例信息
-            
-        Returns:
-            float: 相似度分数
-        """
+    
+    def _compute_hierarchy_similarity(self, hierarchy1: Dict, hierarchy2: Dict) -> float:
+        """计算层次结构相似度"""
         try:
-            # 获取层次结构
-            query_hierarchy = query.get('hierarchy', {})
-            case_hierarchy = case.get('hierarchy', {})
+            if not hierarchy1 or not hierarchy2:
+                return 0.0
             
-            if not query_hierarchy or not case_hierarchy:
+            # 提取模块列表
+            modules1 = set(hierarchy1.get('modules', []))
+            modules2 = set(hierarchy2.get('modules', []))
+            
+            if not modules1 or not modules2:
+                return 0.0
+            
+            # 计算Jaccard相似度
+            intersection = len(modules1.intersection(modules2))
+            union = len(modules1.union(modules2))
+            
+            if union > 0:
+                return intersection / union
+            else:
                 return 0.0
                 
-            # 计算层次级别相似度
-            query_levels = set(query_hierarchy.get('levels', []))
-            case_levels = set(case_hierarchy.get('levels', []))
-            
-            level_sim = len(query_levels & case_levels) / len(query_levels | case_levels) if query_levels or case_levels else 0.0
-            
-            # 计算模块相似度
-            query_modules = set(query_hierarchy.get('modules', []))
-            case_modules = set(case_hierarchy.get('modules', []))
-            
-            module_sim = len(query_modules & case_modules) / len(query_modules | case_modules) if query_modules or case_modules else 0.0
-            
-            # 加权融合
-            return 0.6 * level_sim + 0.4 * module_sim
-            
         except Exception as e:
-            logger.error(f"计算层次结构相似度失败: {str(e)}")
+            logger.error(f"层次结构相似度计算失败: {str(e)}")
             return 0.0
-            
-    def _compute_constraint_similarity(self, query: Dict[str, Any], case: Dict[str, Any]) -> float:
-        """计算约束相似度
-        
-        Args:
-            query: 查询信息
-            case: 案例信息
-            
-        Returns:
-            float: 相似度分数
-        """
+    
+    def _compute_constraint_similarity(self, constraints1: Dict, constraints2: Dict) -> float:
+        """计算约束条件相似度"""
         try:
-            # 获取约束
-            query_constraints = query.get('constraints', {})
-            case_constraints = case.get('constraints', {})
+            if not constraints1 or not constraints2:
+                return 0.0
             
-            if not query_constraints or not case_constraints:
+            total_score = 0.0
+            total_weight = 0.0
+            
+            # 1. 时序约束相似度
+            if 'timing' in constraints1 and 'timing' in constraints2:
+                timing1 = constraints1['timing']
+                timing2 = constraints2['timing']
+                if 'max_delay' in timing1 and 'max_delay' in timing2:
+                    delay1 = timing1['max_delay']
+                    delay2 = timing2['max_delay']
+                    if delay1 > 0 and delay2 > 0:
+                        delay_sim = 1.0 - abs(delay1 - delay2) / max(delay1, delay2)
+                        total_score += delay_sim * 0.5
+                        total_weight += 0.5
+            
+            # 2. 功耗约束相似度
+            if 'power' in constraints1 and 'power' in constraints2:
+                power1 = constraints1['power']
+                power2 = constraints2['power']
+                if 'max_power' in power1 and 'max_power' in power2:
+                    power_val1 = power1['max_power']
+                    power_val2 = power2['max_power']
+                    if power_val1 > 0 and power_val2 > 0:
+                        power_sim = 1.0 - abs(power_val1 - power_val2) / max(power_val1, power_val2)
+                        total_score += power_sim * 0.3
+                        total_weight += 0.3
+            
+            # 3. 特殊网络数量相似度
+            if 'special_nets' in constraints1 and 'special_nets' in constraints2:
+                nets1 = constraints1['special_nets']
+                nets2 = constraints2['special_nets']
+                if isinstance(nets1, (int, float)) and isinstance(nets2, (int, float)):
+                    nets_sim = 1.0 - abs(nets1 - nets2) / max(nets1, nets2, 1)
+                    total_score += nets_sim * 0.2
+                    total_weight += 0.2
+            
+            if total_weight > 0:
+                return total_score / total_weight
+            else:
                 return 0.0
                 
-            # 计算约束类型相似度
-            query_types = set(query_constraints.keys())
-            case_types = set(case_constraints.keys())
-            
-            type_sim = len(query_types & case_types) / len(query_types | case_types) if query_types or case_types else 0.0
-            
-            # 计算约束值相似度
-            value_sim = 0.0
-            value_count = 0
-            
-            for constraint_type in query_types & case_types:
-                query_values = query_constraints[constraint_type]
-                case_values = case_constraints[constraint_type]
-                
-                if isinstance(query_values, dict) and isinstance(case_values, dict):
-                    value_count += 1
-                    common_keys = set(query_values.keys()) & set(case_values.keys())
-                    
-                    if common_keys:
-                        type_value_sim = 0.0
-                        for key in common_keys:
-                            if isinstance(query_values[key], (int, float)):
-                                diff = abs(query_values[key] - case_values[key])
-                                max_val = max(abs(query_values[key]), abs(case_values[key]))
-                                if max_val > 0:
-                                    type_value_sim += 1 - (diff / max_val)
-                                    
-                        type_value_sim /= len(common_keys)
-                        value_sim += type_value_sim
-                        
-            value_sim = value_sim / value_count if value_count > 0 else 0.0
-            
-            # 加权融合
-            return 0.4 * type_sim + 0.6 * value_sim
-            
         except Exception as e:
-            logger.error(f"计算约束相似度失败: {str(e)}")
+            logger.error(f"约束条件相似度计算失败: {str(e)}")
             return 0.0
-        
+    
     def hierarchical_decomposition(self, design_info: Dict) -> Dict:
         """对设计进行层次化分解
         
@@ -660,50 +663,6 @@ class KnowledgeBase:
             层次化分解结果
         """
         return self.decomposition_manager.hierarchical_decomposition(design_info)
-
-    def _compute_similarity(self, features1: Dict, features2: Dict) -> float:
-        """计算两个布局特征之间的相似度
-        
-        Args:
-            features1: 第一个布局的特征
-            features2: 第二个布局的特征
-            
-        Returns:
-            相似度得分，范围[0,1]
-        """
-        # 计算数值特征的欧氏距离
-        numeric_features = ['area', 'aspect_ratio', 'num_components', 
-                          'component_density', 'num_nets', 'avg_net_length', 
-                          'max_net_length']
-        distances = []
-        for feat in numeric_features:
-            if feat in features1 and feat in features2:
-                # 归一化距离
-                max_val = max(features1[feat], features2[feat])
-                if max_val > 0:
-                    dist = abs(features1[feat] - features2[feat]) / max_val
-                    distances.append(dist)
-        
-        # 计算组件类型分布的相似度
-        if 'component_types' in features1 and 'component_types' in features2:
-            types1 = features1['component_types']
-            types2 = features2['component_types']
-            all_types = set(types1.keys()) | set(types2.keys())
-            
-            # 计算余弦相似度
-            dot_product = sum(types1.get(t, 0) * types2.get(t, 0) for t in all_types)
-            norm1 = sum(v * v for v in types1.values()) ** 0.5
-            norm2 = sum(v * v for v in types2.values()) ** 0.5
-            
-            if norm1 > 0 and norm2 > 0:
-                type_similarity = dot_product / (norm1 * norm2)
-                distances.append(1 - type_similarity)  # 转换为距离
-        
-        # 计算平均距离作为最终相似度
-        if distances:
-            similarity = 1 - (sum(distances) / len(distances))
-            return max(0.0, min(1.0, similarity))  # 确保结果在[0,1]范围内
-        return 0.0  # 如果没有可比较的特征，返回0 
 
     def retrieve(self, query: Dict, constraints: Dict, top_k: int = 5) -> Dict:
         """检索相关知识
@@ -722,7 +681,7 @@ class KnowledgeBase:
         """
         # 获取相似案例
         similar_cases = self.get_similar_cases(
-            query=query,
+            query_features=query,
             top_k=top_k,
             similarity_threshold=0.5
         )

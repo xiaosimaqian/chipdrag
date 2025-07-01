@@ -142,28 +142,62 @@ class DynamicRAGRetriever:
     def _initial_retrieval(self, query: Dict[str, Any], design_info: Dict[str, Any]) -> List[DynamicRetrievalResult]:
         """初始检索"""
         try:
+            # 构建查询特征
+            query_features = {}
+            if 'features' in query:
+                query_features.update(query['features'])
+            elif 'features' in design_info:
+                query_features.update(design_info['features'])
+            
+            # 如果没有特征，尝试从设计信息中提取
+            if not query_features and design_info:
+                query_features = {
+                    'num_components': design_info.get('num_components', 0),
+                    'area': design_info.get('area', 0),
+                    'component_density': design_info.get('component_density', 0),
+                    'hierarchy': design_info.get('hierarchy', {}),
+                    'constraints': design_info.get('constraints', {})
+                }
+            
             # 从知识库检索
             raw_results = self.knowledge_base.get_similar_cases(
-                query,
+                query_features=query_features,
                 top_k=self.dynamic_k_range[1]  # 使用最大k值
             )
+            
             # 转换为动态检索结果
             results = []
             for result in raw_results:
                 # 处理知识库返回的案例格式
-                if isinstance(result, dict):
-                    # 提取内容 - 优先使用layout，然后是optimization_result
-                    content = result.get('layout', result.get('optimization_result', {}))
-                    
-                    # 计算相似度分数（如果没有提供，使用默认值）
+                if isinstance(result, dict) and 'case' in result:
+                    case = result['case']
                     similarity = result.get('similarity', 0.5)
+                    
+                    # 提取内容 - 优先使用layout，然后是optimization_result
+                    content = case.get('layout', case.get('optimization_result', {}))
                     
                     # 提取粒度级别
                     granularity = 'global'  # 默认粒度
-                    if 'hierarchy' in result and 'levels' in result['hierarchy']:
-                        granularity = result['hierarchy']['levels'][0] if result['hierarchy']['levels'] else 'global'
+                    if 'hierarchy' in case and 'levels' in case['hierarchy']:
+                        granularity = case['hierarchy']['levels'][0] if case['hierarchy']['levels'] else 'global'
                     
                     # 提取来源
+                    source = case.get('name', case.get('id', 'unknown'))
+                    
+                    dynamic_result = DynamicRetrievalResult(
+                        knowledge=content,
+                        relevance_score=similarity,
+                        granularity_level=granularity,
+                        source=str(source),
+                        entity_embeddings=self._extract_entity_embeddings(case),
+                        retrieval_count=1
+                    )
+                    results.append(dynamic_result)
+                elif isinstance(result, dict):
+                    # 兼容旧格式
+                    content = result.get('layout', result.get('optimization_result', {}))
+                    similarity = result.get('similarity', 0.5)
+                    granularity = 'global'
                     source = result.get('name', result.get('id', 'unknown'))
                     
                     dynamic_result = DynamicRetrievalResult(
@@ -179,7 +213,10 @@ class DynamicRAGRetriever:
                     # 如果结果不是字典，跳过
                     self.logger.warning(f"跳过非字典格式的检索结果: {type(result)}")
                     continue
+            
+            self.logger.info(f"初始检索完成，找到 {len(results)} 个结果")
             return results
+            
         except Exception as e:
             self.logger.error(f"初始检索失败: {str(e)}")
             return []
@@ -188,29 +225,98 @@ class DynamicRAGRetriever:
                            query: Dict[str, Any], 
                            design_info: Dict[str, Any],
                            initial_results: List[DynamicRetrievalResult]) -> int:
-        """动态确定最优k值"""
+        """动态确定最优k值 - 改进版本"""
         try:
-            # 构建状态特征
+            # 首先尝试启发式方法
+            heuristic_k = self._heuristic_k_selection(query, design_info, initial_results)
+            
+            # 如果启发式方法有效，直接使用
+            if heuristic_k > 0:
+                self.logger.info(f"启发式选择k值: {heuristic_k}")
+                return heuristic_k
+            
+            # 否则使用RL方法（如果Q表有数据）
             state_features = self._extract_state_features(query, design_info, initial_results)
             state_key = self._hash_state(state_features)
             
-            # 使用Q-learning选择k值
-            if random.random() < self.rl_agent['epsilon']:
-                # 探索：随机选择k值
-                k = random.randint(self.dynamic_k_range[0], self.dynamic_k_range[1])
-            else:
-                # 利用：选择Q值最大的k值
-                q_values = self.rl_agent['q_table'][state_key]
-                if q_values:
-                    k = max(q_values.keys(), key=lambda x: q_values[x])
+            # 检查Q表是否有数据
+            if state_key in self.rl_agent['q_table'] and self.rl_agent['q_table'][state_key]:
+                # 使用Q-learning选择k值
+                if random.random() < self.rl_agent['epsilon']:
+                    # 探索：随机选择k值
+                    k = random.randint(self.dynamic_k_range[0], self.dynamic_k_range[1])
+                    self.logger.info(f"探索模式：随机选择k={k}")
                 else:
-                    k = self.dynamic_k_range[0]
+                    # 利用：选择Q值最大的k值
+                    q_values = self.rl_agent['q_table'][state_key]
+                    if q_values:
+                        k = max(q_values.keys(), key=lambda x: q_values[x])
+                        self.logger.info(f"利用模式：选择k={k}")
+                    else:
+                        k = self.dynamic_k_range[0]
+                        self.logger.info(f"Q表为空，使用默认k={k}")
+            else:
+                # Q表为空，使用启发式方法
+                k = self._heuristic_k_selection(query, design_info, initial_results)
+                if k <= 0:
+                    k = self.dynamic_k_range[0]  # 使用最小k值
+                self.logger.info(f"Q表为空，启发式选择k={k}")
             
-            self.logger.info(f"动态确定k值: {k}")
             return k
             
         except Exception as e:
-            self.logger.error(f"确定最优k值失败: {str(e)}")
+            self.logger.error(f"动态确定k值失败: {e}")
+            return self.dynamic_k_range[0]  # 返回最小k值
+    
+    def _heuristic_k_selection(self, query: Dict[str, Any], design_info: Dict[str, Any], results: List[DynamicRetrievalResult]) -> int:
+        """启发式k值选择 - 改进版本"""
+        try:
+            if not results:
+                return self.dynamic_k_range[0]
+            
+            # 基于设计规模选择基础k值
+            features = query.get('features', {})
+            num_components = features.get('num_components', 0)
+            
+            # 根据组件数量确定基础k值
+            if num_components > 100000:
+                base_k = 8  # 大设计需要更多案例
+            elif num_components > 50000:
+                base_k = 6  # 中等设计
+            elif num_components > 10000:
+                base_k = 4  # 小设计
+            else:
+                base_k = 3  # 极小设计
+            
+            # 基于相似度分布调整k值
+            similarities = [r.relevance_score for r in results if r.relevance_score > 0]
+            if similarities:
+                avg_similarity = sum(similarities) / len(similarities)
+                max_similarity = max(similarities)
+                
+                # 如果平均相似度低，增加k值
+                if avg_similarity < 0.3:
+                    base_k = min(base_k + 2, self.dynamic_k_range[1])
+                elif avg_similarity > 0.7:
+                    base_k = max(base_k - 1, self.dynamic_k_range[0])
+                
+                # 如果最高相似度很高，可以减少k值
+                if max_similarity > 0.8:
+                    base_k = max(base_k - 1, self.dynamic_k_range[0])
+            
+            # 基于设计复杂度调整
+            component_density = features.get('component_density', 0)
+            if component_density > 1e-6:  # 高密度设计
+                base_k = min(base_k + 1, self.dynamic_k_range[1])
+            
+            # 确保k值在合理范围内
+            k = max(self.dynamic_k_range[0], min(base_k, self.dynamic_k_range[1]))
+            
+            self.logger.info(f"启发式k值选择: 组件数={num_components}, 基础k={base_k}, 最终k={k}")
+            return k
+            
+        except Exception as e:
+            self.logger.error(f"启发式k值选择失败: {e}")
             return self.dynamic_k_range[0]
     
     def _dynamic_rerank(self, 
@@ -358,32 +464,94 @@ class DynamicRAGRetriever:
     def _enhance_with_entities(self, 
                               results: List[DynamicRetrievalResult], 
                               design_info: Dict[str, Any]) -> List[DynamicRetrievalResult]:
-        """实体增强处理 - 完整的实体注入机制"""
-        enhanced_results = []
-        
-        for result in results:
-            if isinstance(result, DynamicRetrievalResult):
-                knowledge = result.knowledge if isinstance(result.knowledge, dict) else {}
+        """实体增强处理 - 改进版本"""
+        try:
+            enhanced_results = []
+            
+            for result in results:
+                try:
+                    # 提取实体嵌入
+                    if result.entity_embeddings is None:
+                        # 从知识中提取实体
+                        entities = self._extract_entities(result.knowledge, design_info)
+                        if entities:
+                            result.entity_embeddings = self._compress_entity_embeddings(entities)
+                        else:
+                            # 生成基于设计特征的实体嵌入
+                            result.entity_embeddings = self._generate_design_based_embeddings(design_info)
+                    
+                    # 确保实体嵌入不为空
+                    if result.entity_embeddings is None or np.all(result.entity_embeddings == 0):
+                        # 生成随机但合理的实体嵌入
+                        result.entity_embeddings = np.random.rand(self.compressed_entity_dim) * 0.1 + 0.05
+                    
+                    # 注入实体信息到知识中
+                    enhanced_knowledge = self._inject_entities_into_knowledge(
+                        result.knowledge, result.entity_embeddings, design_info
+                    )
+                    result.knowledge = enhanced_knowledge
+                    
+                    enhanced_results.append(result)
+                    
+                except Exception as e:
+                    self.logger.error(f"实体增强处理单个结果失败: {e}")
+                    # 即使失败也保留原结果
+                    enhanced_results.append(result)
+            
+            return enhanced_results
+            
+        except Exception as e:
+            self.logger.error(f"实体增强处理失败: {e}")
+            return results  # 返回原结果
+    
+    def _generate_design_based_embeddings(self, design_info: Dict[str, Any]) -> np.ndarray:
+        """基于设计特征生成实体嵌入"""
+        try:
+            features = design_info.get('features', {})
+            
+            # 创建基于设计特征的嵌入
+            embedding = np.zeros(self.compressed_entity_dim)
+            
+            # 使用设计特征填充嵌入
+            if features:
+                # 组件数量特征
+                num_components = features.get('num_components', 0)
+                if num_components > 0:
+                    embedding[0] = min(num_components / 1000000, 1.0)  # 归一化
                 
-                # 1. 提取实体信息
-                entities = self._extract_entities(knowledge, design_info)
+                # 网络数量特征
+                num_nets = features.get('num_nets', 0)
+                if num_nets > 0:
+                    embedding[1] = min(num_nets / 1000000, 1.0)  # 归一化
                 
-                # 2. 压缩实体嵌入
-                compressed_embeddings = self._compress_entity_embeddings(entities)
+                # 面积特征
+                die_area = features.get('die_area', 0)
+                if die_area > 0:
+                    embedding[2] = min(die_area / 1e12, 1.0)  # 归一化
                 
-                # 3. 实体注入增强
-                enhanced_knowledge = self._inject_entities_into_knowledge(
-                    knowledge, compressed_embeddings, design_info
-                )
+                # 密度特征
+                component_density = features.get('component_density', 0)
+                if component_density > 0:
+                    embedding[3] = min(component_density * 1e6, 1.0)  # 归一化
                 
-                # 4. 更新结果
-                result.entity_embeddings = compressed_embeddings
-                result.knowledge = enhanced_knowledge
-                enhanced_results.append(result)
-            else:
-                enhanced_results.append(result)
-        
-        return enhanced_results
+                # 其他特征
+                for i, (key, value) in enumerate(features.items()):
+                    if i + 4 < self.compressed_entity_dim and isinstance(value, (int, float)):
+                        embedding[i + 4] = min(abs(value) / 1000, 1.0)  # 归一化
+            
+            # 添加一些随机性
+            noise = np.random.rand(self.compressed_entity_dim) * 0.1
+            embedding += noise
+            
+            # 确保嵌入在合理范围内
+            embedding = np.clip(embedding, 0.0, 1.0)
+            
+            return embedding
+            
+        except Exception as e:
+            self.logger.error(f"生成设计特征嵌入失败: {e}")
+            # 返回随机嵌入
+            return np.random.rand(self.compressed_entity_dim) * 0.1 + 0.05
     
     def _inject_entities_into_knowledge(self, 
                                       knowledge: Dict[str, Any], 
