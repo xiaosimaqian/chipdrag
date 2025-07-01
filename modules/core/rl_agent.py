@@ -20,13 +20,35 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class State:
-    """状态表示"""
+    """状态表示 - 完整的强化学习状态空间定义"""
+    # 查询复杂度特征
     query_complexity: float
+    query_length: int
+    query_type: str
+    
+    # 设计特征
     design_type: str
+    design_size: int  # 组件数量
+    design_area: float
     constraint_count: int
+    constraint_types: List[str]
+    
+    # 检索特征
     initial_relevance: float
     result_diversity: float
+    knowledge_coverage: float
+    entity_count: int
+    
+    # 性能特征
     historical_performance: float
+    recent_success_rate: float
+    average_quality_score: float
+    
+    # 上下文特征
+    current_iteration: int
+    optimization_stage: str  # 'initial', 'refinement', 'final'
+    
+    # 时间戳
     timestamp: str
 
 @dataclass
@@ -308,7 +330,7 @@ class StateExtractor:
                              query: Dict[str, Any], 
                              design_info: Dict[str, Any],
                              initial_results: List[Any]) -> State:
-        """提取状态特征
+        """提取状态特征 - 完整的强化学习状态空间
         
         Args:
             query: 查询信息
@@ -319,31 +341,54 @@ class StateExtractor:
             State: 状态对象
         """
         try:
-            # 计算查询复杂度
+            # 查询复杂度特征
             query_complexity = self._calculate_query_complexity(query)
+            query_length = len(query.get('text', '')) if isinstance(query, dict) else 0
+            query_type = query.get('type', 'general') if isinstance(query, dict) else 'general'
             
-            # 获取设计类型
-            design_type = design_info.get('design_type', 'unknown')
+            # 设计特征
+            design_type = design_info.get('design_type', 'unknown') if isinstance(design_info, dict) else 'unknown'
+            design_size = len(design_info.get('components', [])) if isinstance(design_info, dict) else 0
+            design_area = design_info.get('area', 0.0) if isinstance(design_info, dict) else 0.0
+            constraint_count = len(design_info.get('constraints', [])) if isinstance(design_info, dict) else 0
+            constraint_types = list(set([
+                c.get('type', 'unknown') for c in design_info.get('constraints', [])
+                if isinstance(c, dict)
+            ])) if isinstance(design_info, dict) else []
             
-            # 计算约束数量
-            constraint_count = len(design_info.get('constraints', []))
-            
-            # 计算初始相关性
+            # 检索特征
             initial_relevance = np.mean([getattr(r, 'relevance_score', 0.0) for r in initial_results]) if initial_results else 0.0
-            
-            # 计算结果多样性
             result_diversity = self._calculate_diversity(initial_results)
+            knowledge_coverage = self._calculate_knowledge_coverage(initial_results, design_info)
+            entity_count = self._count_entities(initial_results)
             
-            # 获取历史性能
+            # 性能特征
             historical_performance = self._get_historical_performance(query)
+            recent_success_rate = self._get_recent_success_rate(query)
+            average_quality_score = self._get_average_quality_score(query)
+            
+            # 上下文特征
+            current_iteration = query.get('iteration', 0) if isinstance(query, dict) else 0
+            optimization_stage = self._determine_optimization_stage(current_iteration, query_complexity)
             
             state = State(
                 query_complexity=query_complexity,
+                query_length=query_length,
+                query_type=query_type,
                 design_type=design_type,
+                design_size=design_size,
+                design_area=design_area,
                 constraint_count=constraint_count,
+                constraint_types=constraint_types,
                 initial_relevance=initial_relevance,
                 result_diversity=result_diversity,
+                knowledge_coverage=knowledge_coverage,
+                entity_count=entity_count,
                 historical_performance=historical_performance,
+                recent_success_rate=recent_success_rate,
+                average_quality_score=average_quality_score,
+                current_iteration=current_iteration,
+                optimization_stage=optimization_stage,
                 timestamp=datetime.now().isoformat()
             )
             
@@ -354,11 +399,22 @@ class StateExtractor:
             # 返回默认状态
             return State(
                 query_complexity=0.5,
+                query_length=0,
+                query_type='general',
                 design_type='unknown',
+                design_size=0,
+                design_area=0.0,
                 constraint_count=0,
+                constraint_types=[],
                 initial_relevance=0.0,
                 result_diversity=0.0,
+                knowledge_coverage=0.0,
+                entity_count=0,
                 historical_performance=0.0,
+                recent_success_rate=0.0,
+                average_quality_score=0.0,
+                current_iteration=0,
+                optimization_stage='initial',
                 timestamp=datetime.now().isoformat()
             )
     
@@ -454,6 +510,96 @@ class StateExtractor:
         """
         query_str = json.dumps(query, sort_keys=True)
         return hashlib.md5(query_str.encode()).hexdigest()
+    
+    def _calculate_knowledge_coverage(self, results: List[Any], design_info: Dict[str, Any]) -> float:
+        """计算知识覆盖度"""
+        if not results:
+            return 0.0
+        
+        # 计算检索结果覆盖的设计特征
+        covered_features = set()
+        total_features = set()
+        
+        # 设计特征
+        if isinstance(design_info, dict):
+            total_features.add('components')
+            total_features.add('constraints')
+            total_features.add('area')
+            total_features.add('type')
+            
+            if 'components' in design_info:
+                covered_features.add('components')
+            if 'constraints' in design_info:
+                covered_features.add('constraints')
+            if 'area' in design_info:
+                covered_features.add('area')
+            if 'type' in design_info:
+                covered_features.add('type')
+        
+        # 检索结果特征
+        for result in results:
+            if hasattr(result, 'knowledge') and isinstance(result.knowledge, dict):
+                if 'components' in result.knowledge:
+                    covered_features.add('components')
+                if 'constraints' in result.knowledge:
+                    covered_features.add('constraints')
+                if 'area' in result.knowledge:
+                    covered_features.add('area')
+                if 'type' in result.knowledge:
+                    covered_features.add('type')
+        
+        return len(covered_features) / len(total_features) if total_features else 0.0
+    
+    def _count_entities(self, results: List[Any]) -> int:
+        """计算实体数量"""
+        entity_count = 0
+        
+        for result in results:
+            if hasattr(result, 'knowledge') and isinstance(result.knowledge, dict):
+                # 计算组件实体
+                if 'components' in result.knowledge:
+                    entity_count += len(result.knowledge['components'])
+                
+                # 计算约束实体
+                if 'constraints' in result.knowledge:
+                    entity_count += len(result.knowledge['constraints'])
+                
+                # 计算端口实体
+                if 'ports' in result.knowledge:
+                    entity_count += len(result.knowledge['ports'])
+        
+        return entity_count
+    
+    def _get_recent_success_rate(self, query: Dict[str, Any]) -> float:
+        """获取最近成功率"""
+        query_key = self._hash_query(query)
+        
+        if query_key in self.performance_cache:
+            performances = self.performance_cache[query_key]
+            recent_performances = performances[-5:] if len(performances) >= 5 else performances
+            success_count = sum(1 for p in recent_performances if p > 0.7)
+            return success_count / len(recent_performances) if recent_performances else 0.0
+        
+        return 0.0
+    
+    def _get_average_quality_score(self, query: Dict[str, Any]) -> float:
+        """获取平均质量分数"""
+        query_key = self._hash_query(query)
+        
+        if query_key in self.performance_cache:
+            performances = self.performance_cache[query_key]
+            return np.mean(performances[-10:]) if performances else 0.0
+        
+        return 0.0
+    
+    def _determine_optimization_stage(self, current_iteration: int, query_complexity: float) -> str:
+        """确定优化阶段"""
+        if current_iteration == 0:
+            return 'initial'
+        elif current_iteration < 5:
+            return 'refinement'
+        else:
+            return 'final'
 
 class RewardCalculator:
     """奖励计算器"""
