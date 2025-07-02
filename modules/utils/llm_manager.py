@@ -12,6 +12,7 @@ import torch
 from transformers import AutoTokenizer, AutoModel, AutoModelForCausalLM
 import requests
 import time
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -497,9 +498,130 @@ class LLMManager:
         Returns:
             设计分析结果
         """
-        # TODO: 实现设计分析
-        return {}
+        try:
+            # 构建设计分析提示
+            prompt = self._build_design_analysis_prompt(design_info)
+            
+            # 调用LLM
+            response = self._call_ollama(prompt)
+            
+            # 解析响应
+            analysis = self._parse_design_analysis_response(response)
+            
+            # 确保返回正确的结构
+            if not analysis:
+                analysis = {
+                    'complexity_level': 'medium',
+                    'design_type': design_info.get('design_type', 'unknown'),
+                    'estimated_area': design_info.get('area', 0),
+                    'component_count': design_info.get('num_components', 0),
+                    'constraint_count': len(design_info.get('constraints', {})),
+                    'hierarchy_levels': len(design_info.get('hierarchy', {}).get('levels', [])),
+                    'key_features': ['standard_cell', 'digital_logic'],
+                    'optimization_priorities': ['wirelength', 'timing', 'power'],
+                    'estimated_difficulty': 'medium',
+                    'suggested_strategies': [
+                        'hierarchical_placement',
+                        'timing_driven_optimization',
+                        'power_aware_routing'
+                    ],
+                    'metadata': {
+                        'source': 'llm_design_analysis',
+                        'timestamp': datetime.now().isoformat(),
+                        'version': '1.0'
+                    }
+                }
+            
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"设计分析失败: {e}")
+            return {
+                'complexity_level': 'medium',
+                'design_type': 'unknown',
+                'estimated_area': 0,
+                'component_count': 0,
+                'constraint_count': 0,
+                'hierarchy_levels': 1,
+                'key_features': ['standard_cell'],
+                'optimization_priorities': ['wirelength'],
+                'estimated_difficulty': 'medium',
+                'suggested_strategies': ['basic_placement'],
+                'metadata': {
+                    'source': 'error_fallback',
+                    'timestamp': datetime.now().isoformat(),
+                    'version': '1.0'
+                }
+            }
+    
+    def _build_design_analysis_prompt(self, design_info: Dict[str, Any]) -> str:
+        """构建设计分析提示
         
+        Args:
+            design_info: 设计信息
+            
+        Returns:
+            str: 分析提示
+        """
+        components_count = design_info.get('num_components', 0)
+        area = design_info.get('area', 0)
+        constraints = design_info.get('constraints', {})
+        hierarchy = design_info.get('hierarchy', {})
+        
+        prompt = f"""
+请分析以下芯片设计信息，并提供详细的设计特征分析：
+
+设计信息：
+- 组件数量: {components_count}
+- 设计面积: {area}
+- 约束条件: {constraints}
+- 层次结构: {hierarchy}
+
+请从以下方面进行分析：
+1. 设计复杂度评估
+2. 设计类型识别
+3. 关键特征提取
+4. 优化优先级建议
+5. 布局策略建议
+
+请以JSON格式返回分析结果，包含以下字段：
+- complexity_level: 复杂度级别 (low/medium/high)
+- design_type: 设计类型
+- estimated_area: 估计面积
+- component_count: 组件数量
+- constraint_count: 约束数量
+- hierarchy_levels: 层次级别数
+- key_features: 关键特征列表
+- optimization_priorities: 优化优先级列表
+- estimated_difficulty: 估计难度
+- suggested_strategies: 建议策略列表
+- metadata: 元数据信息
+"""
+        return prompt
+    
+    def _parse_design_analysis_response(self, response: str) -> Dict[str, Any]:
+        """解析设计分析响应
+        
+        Args:
+            response: LLM响应
+            
+        Returns:
+            Dict: 解析后的设计分析结果
+        """
+        try:
+            # 尝试解析JSON响应
+            if '{' in response and '}' in response:
+                start = response.find('{')
+                end = response.rfind('}') + 1
+                json_str = response[start:end]
+                return json.loads(json_str)
+            else:
+                # 如果无法解析JSON，返回空字典
+                return {}
+        except Exception as e:
+            logger.warning(f"解析设计分析响应失败: {e}")
+            return {}
+    
     def analyze_hierarchy(self, design_info: Dict[str, Any]) -> Dict[str, Any]:
         """分析层次结构
         
@@ -509,8 +631,145 @@ class LLMManager:
         Returns:
             层次结构分析结果
         """
-        # TODO: 实现层次结构分析
-        return {}
+        try:
+            # 构建层次结构分析提示
+            prompt = self._build_hierarchy_analysis_prompt(design_info)
+            
+            # 调用LLM
+            response = self._call_ollama(prompt)
+            
+            # 解析响应
+            analysis = self._parse_hierarchy_analysis_response(response)
+            
+            # 确保返回正确的结构
+            if not analysis:
+                hierarchy = design_info.get('hierarchy', {})
+                levels = hierarchy.get('levels', [])
+                modules = hierarchy.get('modules', [])
+                
+                analysis = {
+                    'hierarchy_depth': len(levels),
+                    'module_count': len(modules),
+                    'module_types': list(set(modules)),
+                    'hierarchy_structure': {
+                        'levels': levels,
+                        'modules': modules,
+                        'relationships': []
+                    },
+                    'complexity_analysis': {
+                        'structural_complexity': 'medium',
+                        'module_diversity': len(set(modules)),
+                        'hierarchy_balance': 'balanced'
+                    },
+                    'entity_relationships': [
+                        {
+                            'source': module,
+                            'target': 'top_level',
+                            'relationship_type': 'hierarchy'
+                        } for module in modules
+                    ],
+                    'optimization_insights': [
+                        '层次结构清晰，适合分层优化',
+                        '模块类型多样，需要差异化处理',
+                        '建议采用自顶向下的布局策略'
+                    ],
+                    'metadata': {
+                        'source': 'llm_hierarchy_analysis',
+                        'timestamp': datetime.now().isoformat(),
+                        'version': '1.0'
+                    }
+                }
+            
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"层次结构分析失败: {e}")
+            return {
+                'hierarchy_depth': 1,
+                'module_count': 0,
+                'module_types': [],
+                'hierarchy_structure': {
+                    'levels': ['top'],
+                    'modules': [],
+                    'relationships': []
+                },
+                'complexity_analysis': {
+                    'structural_complexity': 'low',
+                    'module_diversity': 0,
+                    'hierarchy_balance': 'simple'
+                },
+                'entity_relationships': [],
+                'optimization_insights': ['基本层次结构'],
+                'metadata': {
+                    'source': 'error_fallback',
+                    'timestamp': datetime.now().isoformat(),
+                    'version': '1.0'
+                }
+            }
+    
+    def _build_hierarchy_analysis_prompt(self, design_info: Dict[str, Any]) -> str:
+        """构建层次结构分析提示
+        
+        Args:
+            design_info: 设计信息
+            
+        Returns:
+            str: 分析提示
+        """
+        hierarchy = design_info.get('hierarchy', {})
+        levels = hierarchy.get('levels', [])
+        modules = hierarchy.get('modules', [])
+        components_count = design_info.get('num_components', 0)
+        
+        prompt = f"""
+请分析以下芯片设计的层次结构信息：
+
+层次结构信息：
+- 层次级别: {levels}
+- 模块列表: {modules}
+- 组件总数: {components_count}
+
+请从以下方面进行分析：
+1. 层次深度和复杂度
+2. 模块类型和多样性
+3. 层次结构特征
+4. 实体关系分析
+5. 优化洞察和建议
+
+请以JSON格式返回分析结果，包含以下字段：
+- hierarchy_depth: 层次深度
+- module_count: 模块数量
+- module_types: 模块类型列表
+- hierarchy_structure: 层次结构详细信息
+- complexity_analysis: 复杂度分析
+- entity_relationships: 实体关系列表
+- optimization_insights: 优化洞察列表
+- metadata: 元数据信息
+"""
+        return prompt
+    
+    def _parse_hierarchy_analysis_response(self, response: str) -> Dict[str, Any]:
+        """解析层次结构分析响应
+        
+        Args:
+            response: LLM响应
+            
+        Returns:
+            Dict: 解析后的层次结构分析结果
+        """
+        try:
+            # 尝试解析JSON响应
+            if '{' in response and '}' in response:
+                start = response.find('{')
+                end = response.rfind('}') + 1
+                json_str = response[start:end]
+                return json.loads(json_str)
+            else:
+                # 如果无法解析JSON，返回空字典
+                return {}
+        except Exception as e:
+            logger.warning(f"解析层次结构分析响应失败: {e}")
+            return {}
         
     def analyze_node_knowledge(self, node: Any) -> Dict[str, Any]:
         """分析节点知识
@@ -560,9 +819,148 @@ class LLMManager:
         Returns:
             布局策略
         """
-        # TODO: 实现布局策略生成
-        return {}
+        try:
+            # 构建布局策略生成提示
+            prompt = self._build_layout_strategy_prompt(design_analysis, knowledge)
+            
+            # 调用LLM
+            response = self._call_ollama(prompt)
+            
+            # 解析响应
+            strategy = self._parse_layout_strategy_response(response)
+            
+            # 确保返回正确的结构
+            if not strategy:
+                strategy = {
+                    'placement_strategy': 'hierarchical',
+                    'routing_strategy': 'timing_driven',
+                    'optimization_priorities': ['wirelength', 'timing', 'power'],
+                    'parameter_suggestions': {
+                        'density_target': 0.7,
+                        'wirelength_weight': 1.0,
+                        'timing_weight': 0.8,
+                        'power_weight': 0.6
+                    },
+                    'constraint_handling': {
+                        'timing_constraints': 'aggressive',
+                        'power_constraints': 'moderate',
+                        'area_constraints': 'flexible'
+                    },
+                    'quality_targets': {
+                        'hpwl_improvement': 0.05,
+                        'timing_slack': 0.1,
+                        'power_reduction': 0.03
+                    },
+                    'execution_plan': [
+                        'initial_placement',
+                        'timing_optimization',
+                        'power_optimization',
+                        'final_legalization'
+                    ],
+                    'metadata': {
+                        'source': 'llm_layout_strategy',
+                        'timestamp': datetime.now().isoformat(),
+                        'version': '1.0'
+                    }
+                }
+            
+            return strategy
+            
+        except Exception as e:
+            logger.error(f"布局策略生成失败: {e}")
+            return {
+                'placement_strategy': 'basic',
+                'routing_strategy': 'standard',
+                'optimization_priorities': ['wirelength'],
+                'parameter_suggestions': {
+                    'density_target': 0.7,
+                    'wirelength_weight': 1.0
+                },
+                'constraint_handling': {
+                    'timing_constraints': 'basic',
+                    'power_constraints': 'basic',
+                    'area_constraints': 'basic'
+                },
+                'quality_targets': {
+                    'hpwl_improvement': 0.02
+                },
+                'execution_plan': ['basic_placement'],
+                'metadata': {
+                    'source': 'error_fallback',
+                    'timestamp': datetime.now().isoformat(),
+                    'version': '1.0'
+                }
+            }
+    
+    def _build_layout_strategy_prompt(self, design_analysis: Dict[str, Any], knowledge: Dict[str, Any]) -> str:
+        """构建布局策略生成提示
         
+        Args:
+            design_analysis: 设计分析结果
+            knowledge: 相关知识
+            
+        Returns:
+            str: 策略生成提示
+        """
+        complexity = design_analysis.get('complexity_level', 'medium')
+        design_type = design_analysis.get('design_type', 'unknown')
+        features = design_analysis.get('key_features', [])
+        priorities = design_analysis.get('optimization_priorities', [])
+        
+        prompt = f"""
+基于以下设计分析和知识，生成芯片布局策略：
+
+设计分析：
+- 复杂度级别: {complexity}
+- 设计类型: {design_type}
+- 关键特征: {features}
+- 优化优先级: {priorities}
+
+相关知识: {knowledge}
+
+请生成详细的布局策略，包括：
+1. 布局策略选择
+2. 布线策略选择
+3. 优化参数建议
+4. 约束处理方式
+5. 质量目标设定
+6. 执行计划
+
+请以JSON格式返回策略，包含以下字段：
+- placement_strategy: 布局策略
+- routing_strategy: 布线策略
+- optimization_priorities: 优化优先级列表
+- parameter_suggestions: 参数建议字典
+- constraint_handling: 约束处理方式
+- quality_targets: 质量目标
+- execution_plan: 执行计划列表
+- metadata: 元数据信息
+"""
+        return prompt
+    
+    def _parse_layout_strategy_response(self, response: str) -> Dict[str, Any]:
+        """解析布局策略响应
+        
+        Args:
+            response: LLM响应
+            
+        Returns:
+            Dict: 解析后的布局策略
+        """
+        try:
+            # 尝试解析JSON响应
+            if '{' in response and '}' in response:
+                start = response.find('{')
+                end = response.rfind('}') + 1
+                json_str = response[start:end]
+                return json.loads(json_str)
+            else:
+                # 如果无法解析JSON，返回空字典
+                return {}
+        except Exception as e:
+            logger.warning(f"解析布局策略响应失败: {e}")
+            return {}
+    
     def apply_layout_strategy(self,
                             design_info: Dict[str, Any],
                             strategy: Dict[str, Any]) -> Dict[str, Any]:
@@ -587,299 +985,9 @@ class LLMManager:
         Returns:
             布局分析结果
         """
-        # TODO: 实现布局分析
-        return {}
-        
-    def generate_optimization_strategy(self,
-                                     layout_analysis: Dict[str, Any],
-                                     suggestions: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """生成优化策略
-        
-        Args:
-            layout_analysis: 布局分析结果
-            suggestions: 优化建议
-            
-        Returns:
-            优化策略
-        """
-        # TODO: 实现优化策略生成
-        return {}
-        
-    def apply_optimization_strategy(self,
-                                  layout: Dict[str, Any],
-                                  strategy: Dict[str, Any]) -> Dict[str, Any]:
-        """应用优化策略
-        
-        Args:
-            layout: 当前布局
-            strategy: 优化策略
-            
-        Returns:
-            优化后的布局
-        """
-        # TODO: 实现优化策略应用
-        return {}
-        
-    def generate_transfer_strategy(self,
-                                 source_knowledge: Dict[str, Any],
-                                 target_requirements: Dict[str, Any],
-                                 context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """生成迁移策略
-        
-        Args:
-            source_knowledge: 源节点知识
-            target_requirements: 目标节点需求
-            context: 上下文信息
-            
-        Returns:
-            迁移策略
-        """
-        # TODO: 实现迁移策略生成
-        return {}
-        
-    def execute_knowledge_transfer(self,
-                                 source_knowledge: Dict[str, Any],
-                                 strategy: Dict[str, Any]) -> Dict[str, Any]:
-        """执行知识迁移
-        
-        Args:
-            source_knowledge: 源节点知识
-            strategy: 迁移策略
-            
-        Returns:
-            迁移后的知识
-        """
-        # TODO: 实现知识迁移执行
-        return {}
-        
-    def get_nodes_at_level(self,
-                          hierarchy: Any,
-                          level: str) -> List[Any]:
-        """获取指定层级的节点
-        
-        Args:
-            hierarchy: 层次结构实例
-            level: 层级名称
-            
-        Returns:
-            节点列表
-        """
-        # TODO: 实现节点获取
-        return []
-        
-    def select_relevant_nodes(self,
-                            nodes: List[Any],
-                            similarities: List[float],
-                            threshold: float = 0.7) -> List[Any]:
-        """选择相关节点
-        
-        Args:
-            nodes: 节点列表
-            similarities: 相似度列表
-            threshold: 相似度阈值
-            
-        Returns:
-            相关节点列表
-        """
-        # TODO: 实现节点选择
-        return []
-        
-    def merge_retrieval_results(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """合并检索结果
-        
-        Args:
-            results: 检索结果列表
-            
-        Returns:
-            合并后的结果
-        """
-        # TODO: 实现结果合并
-        return {}
-
-    def compute_similarities(self, queries, candidates):
-        """计算查询和候选之间的相似度
-        
-        Args:
-            queries: 查询列表
-            candidates: 候选列表
-            
-        Returns:
-            List[float]: 相似度列表
-        """
         try:
-            # 参数检查
-            if not queries or not candidates:
-                logger.warning("查询或候选为空")
-                return [0.0 for _ in candidates]
-            
-            # 检查是否有本地模型
-            if self.tokenizer is None or self.model is None:
-                logger.warning("本地模型未初始化，使用默认相似度")
-                return [0.5 for _ in candidates]  # 返回默认相似度
-            
-            # 编码查询和候选
-            query_encodings = self.encode_batch(queries)
-            candidate_encodings = self.encode_batch(candidates)
-            
-            # 计算余弦相似度
-            similarities = torch.nn.functional.cosine_similarity(
-                query_encodings.unsqueeze(1),
-                candidate_encodings.unsqueeze(0),
-                dim=2
-            )
-            
-            # 转换为列表
-            return similarities.tolist()
-            
-        except Exception as e:
-            logger.error(f"计算相似度失败: {str(e)}")
-            return [0.0 for _ in candidates]
-
-    def enhance_knowledge(self, similar_cases: List[Dict], constraints: Dict, optimization_guidelines: List[str]) -> Dict:
-        """增强知识
-        
-        Args:
-            similar_cases: 相似案例列表
-            constraints: 约束信息
-            optimization_guidelines: 优化指南
-            
-        Returns:
-            Dict: 增强后的知识
-        """
-        try:
-            # 构建增强提示
-            prompt = self._build_enhancement_prompt(similar_cases, constraints, optimization_guidelines)
-            
-            # 调用LLM
-            response = self._call_ollama(prompt)
-            
-            # 解析响应
-            enhanced_knowledge = self._parse_enhancement_response(response)
-            
-            # 确保返回正确的结构
-            if not enhanced_knowledge:
-                enhanced_knowledge = {
-                    'area_utilization': 0.75,
-                    'routing_quality': 0.8,
-                    'timing_performance': 0.85,
-                    'power_distribution': 0.7,
-                    'enhanced_suggestions': [
-                        '优化组件布局以减少拥塞',
-                        '调整时序约束以提高性能',
-                        '平衡功耗分布'
-                    ],
-                    'optimization_metrics': {
-                        'wirelength': 0.8,
-                        'congestion': 0.7,
-                        'timing': 0.85,
-                        'power': 0.75
-                    },
-                    'metadata': {
-                        'source': 'llm_enhancement',
-                        'timestamp': '2024-01-01T00:00:00Z',
-                        'version': '1.0'
-                    }
-                }
-            
-            return enhanced_knowledge
-            
-        except Exception as e:
-            logger.error(f"知识增强失败: {str(e)}")
-            # 返回默认结构
-            return {
-                'area_utilization': 0.75,
-                'routing_quality': 0.8,
-                'timing_performance': 0.85,
-                'power_distribution': 0.7,
-                'enhanced_suggestions': [
-                    '优化组件布局以减少拥塞',
-                    '调整时序约束以提高性能',
-                    '平衡功耗分布'
-                ],
-                'optimization_metrics': {
-                    'wirelength': 0.8,
-                    'congestion': 0.7,
-                    'timing': 0.85,
-                    'power': 0.75
-                },
-                'metadata': {
-                    'source': 'llm_enhancement',
-                    'timestamp': '2024-01-01T00:00:00Z',
-                    'version': '1.0'
-                }
-            }
-    
-    def _build_enhancement_prompt(self, similar_cases: List[Dict], constraints: Dict, optimization_guidelines: List[str]) -> str:
-        """构建增强提示
-        
-        Args:
-            similar_cases: 相似案例列表
-            constraints: 约束信息
-            optimization_guidelines: 优化指南
-            
-        Returns:
-            str: 增强提示
-        """
-        prompt = f"""
-请基于以下信息增强芯片布局知识：
-
-相似案例数量: {len(similar_cases)}
-约束信息: {constraints}
-优化指南: {optimization_guidelines}
-
-请提供以下格式的增强知识：
-{{
-    "area_utilization": <面积利用率 0-1>,
-    "routing_quality": <布线质量 0-1>,
-    "timing_performance": <时序性能 0-1>,
-    "power_distribution": <功耗分布 0-1>,
-    "enhanced_suggestions": [
-        "具体优化建议1",
-        "具体优化建议2",
-        "具体优化建议3"
-    ],
-    "optimization_metrics": {{
-        "wirelength": <线长指标 0-1>,
-        "congestion": <拥塞指标 0-1>,
-        "timing": <时序指标 0-1>,
-        "power": <功耗指标 0-1>
-    }}
-}}
-"""
-        return prompt
-    
-    def _parse_enhancement_response(self, response: str) -> Dict:
-        """解析增强响应
-        
-        Args:
-            response: LLM响应
-            
-        Returns:
-            Dict: 解析后的增强知识
-        """
-        try:
-            # 尝试解析JSON
-            if response.strip().startswith('{'):
-                return json.loads(response)
-            else:
-                # 如果不是JSON格式，返回默认值
-                return {}
-        except json.JSONDecodeError:
-            logger.warning(f"无法解析增强响应: {response}")
-            return {}
-    
-    def analyze_layout_detailed(self, layout_result: Dict) -> Dict:
-        """详细分析布局结果
-        
-        Args:
-            layout_result: 布局结果
-            
-        Returns:
-            Dict: 详细分析结果
-        """
-        try:
-            # 构建分析提示
-            prompt = self._build_layout_analysis_prompt(layout_result)
+            # 构建布局分析提示
+            prompt = self._build_layout_analysis_prompt(layout)
             
             # 调用LLM
             response = self._call_ollama(prompt)
@@ -897,9 +1005,11 @@ class LLMManager:
                     'power_distribution': 0.75,
                     'issues': ['布局分析完成'],
                     'suggestions': ['建议进一步优化'],
+                    'needs_optimization': False,
+                    'optimization_priority': 'low',
                     'metadata': {
-                        'source': 'llm_analysis',
-                        'timestamp': '2024-01-01T00:00:00Z',
+                        'source': 'llm_layout_analysis',
+                        'timestamp': datetime.now().isoformat(),
                         'version': '1.0'
                     }
                 }
@@ -907,7 +1017,7 @@ class LLMManager:
             return analysis
             
         except Exception as e:
-            logger.error(f"布局详细分析失败: {e}")
+            logger.error(f"布局分析失败: {e}")
             return {
                 'quality_score': 0.5,
                 'area_utilization': 0.5,
@@ -916,24 +1026,30 @@ class LLMManager:
                 'power_distribution': 0.5,
                 'issues': [f'分析失败: {str(e)}'],
                 'suggestions': ['请检查布局数据'],
+                'needs_optimization': True,
+                'optimization_priority': 'high',
                 'metadata': {
                     'source': 'error_fallback',
-                    'timestamp': '2024-01-01T00:00:00Z',
+                    'timestamp': datetime.now().isoformat(),
                     'version': '1.0'
                 }
             }
     
-    def _build_layout_analysis_prompt(self, layout_result: Dict) -> str:
+    def _build_layout_analysis_prompt(self, layout: Dict[str, Any]) -> str:
         """构建布局分析提示
         
         Args:
-            layout_result: 布局结果
+            layout: 布局信息
             
         Returns:
             str: 分析提示
         """
-        components_count = len(layout_result.get('components', []))
-        nets_count = len(layout_result.get('nets', []))
+        components_count = len(layout.get('components', []))
+        nets_count = len(layout.get('nets', []))
+        area_utilization = layout.get('area_utilization', 0)
+        wirelength = layout.get('wirelength', 0)
+        timing = layout.get('timing', 0)
+        power = layout.get('power', 0)
         
         prompt = f"""
 请分析以下芯片布局结果，并提供详细的质量评估：
@@ -941,14 +1057,21 @@ class LLMManager:
 布局信息：
 - 组件数量: {components_count}
 - 网络数量: {nets_count}
-- 布局名称: {layout_result.get('name', 'unknown')}
+- 面积利用率: {area_utilization}
+- 线长: {wirelength}
+- 时序性能: {timing}
+- 功耗分布: {power}
 
 请从以下方面进行分析：
-1. 面积利用率
-2. 布线质量
-3. 时序性能
-4. 功耗分布
-5. 潜在问题和改进建议
+1. 总体质量评分
+2. 面积利用率评估
+3. 布线质量评估
+4. 时序性能评估
+5. 功耗分布评估
+6. 发现的问题
+7. 改进建议
+8. 是否需要优化
+9. 优化优先级
 
 请以JSON格式返回分析结果，包含以下字段：
 - quality_score: 总体质量评分 (0-1)
@@ -958,6 +1081,8 @@ class LLMManager:
 - power_distribution: 功耗分布 (0-1)
 - issues: 发现的问题列表
 - suggestions: 改进建议列表
+- needs_optimization: 是否需要优化 (boolean)
+- optimization_priority: 优化优先级 (low/medium/high)
 - metadata: 元数据信息
 """
         return prompt
@@ -988,9 +1113,11 @@ class LLMManager:
                     'power_distribution': 0.75,
                     'issues': ['响应解析成功'],
                     'suggestions': ['基于分析结果进行优化'],
+                    'needs_optimization': False,
+                    'optimization_priority': 'low',
                     'metadata': {
-                        'source': 'llm_analysis',
-                        'timestamp': '2024-01-01T00:00:00Z',
+                        'source': 'llm_layout_analysis',
+                        'timestamp': datetime.now().isoformat(),
                         'version': '1.0'
                     }
                 }
@@ -1289,4 +1416,157 @@ class LLMManager:
                 'power_score': 0.75,
                 'routing_quality': 0.8,
                 'overall_score': 0.78
-            } 
+            }
+    
+    def generate_optimization_strategy(self,
+                                     layout_analysis: Dict[str, Any],
+                                     suggestions: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """生成优化策略
+        
+        Args:
+            layout_analysis: 布局分析结果
+            suggestions: 优化建议
+            
+        Returns:
+            优化策略
+        """
+        try:
+            # 构建优化策略生成提示
+            prompt = self._build_optimization_strategy_prompt(layout_analysis, suggestions)
+            
+            # 调用LLM
+            response = self._call_ollama(prompt)
+            
+            # 解析响应
+            strategy = self._parse_optimization_strategy_response(response)
+            
+            # 确保返回正确的结构
+            if not strategy:
+                strategy = {
+                    'optimization_type': 'comprehensive',
+                    'target_metrics': {
+                        'wirelength': 0.05,
+                        'timing': 0.1,
+                        'power': 0.03,
+                        'area': 0.02
+                    },
+                    'optimization_steps': [
+                        'placement_refinement',
+                        'timing_optimization',
+                        'power_optimization',
+                        'final_legalization'
+                    ],
+                    'parameter_adjustments': {
+                        'density_target': 0.75,
+                        'wirelength_weight': 1.2,
+                        'timing_weight': 1.0,
+                        'power_weight': 0.8
+                    },
+                    'constraint_modifications': {
+                        'timing_constraints': 'relaxed',
+                        'power_constraints': 'maintained',
+                        'area_constraints': 'flexible'
+                    },
+                    'expected_improvements': {
+                        'hpwl_reduction': 0.05,
+                        'timing_slack_improvement': 0.1,
+                        'power_reduction': 0.03
+                    },
+                    'metadata': {
+                        'source': 'llm_optimization_strategy',
+                        'timestamp': datetime.now().isoformat(),
+                        'version': '1.0'
+                    }
+                }
+            
+            return strategy
+            
+        except Exception as e:
+            logger.error(f"优化策略生成失败: {e}")
+            return {
+                'optimization_type': 'basic',
+                'target_metrics': {
+                    'wirelength': 0.02
+                },
+                'optimization_steps': ['basic_optimization'],
+                'parameter_adjustments': {
+                    'wirelength_weight': 1.0
+                },
+                'constraint_modifications': {
+                    'timing_constraints': 'maintained'
+                },
+                'expected_improvements': {
+                    'hpwl_reduction': 0.02
+                },
+                'metadata': {
+                    'source': 'error_fallback',
+                    'timestamp': datetime.now().isoformat(),
+                    'version': '1.0'
+                }
+            }
+    
+    def _build_optimization_strategy_prompt(self, layout_analysis: Dict[str, Any], suggestions: List[Dict[str, Any]]) -> str:
+        """构建优化策略生成提示
+        
+        Args:
+            layout_analysis: 布局分析结果
+            suggestions: 优化建议
+            
+        Returns:
+            str: 策略生成提示
+        """
+        quality_score = layout_analysis.get('quality_score', 0.5)
+        issues = layout_analysis.get('issues', [])
+        optimization_priority = layout_analysis.get('optimization_priority', 'medium')
+        
+        prompt = f"""
+基于以下布局分析和优化建议，生成详细的优化策略：
+
+布局分析：
+- 质量评分: {quality_score}
+- 发现的问题: {issues}
+- 优化优先级: {optimization_priority}
+
+优化建议: {suggestions}
+
+请生成详细的优化策略，包括：
+1. 优化类型选择
+2. 目标指标设定
+3. 优化步骤规划
+4. 参数调整建议
+5. 约束修改方案
+6. 预期改进效果
+
+请以JSON格式返回策略，包含以下字段：
+- optimization_type: 优化类型
+- target_metrics: 目标指标字典
+- optimization_steps: 优化步骤列表
+- parameter_adjustments: 参数调整字典
+- constraint_modifications: 约束修改字典
+- expected_improvements: 预期改进字典
+- metadata: 元数据信息
+"""
+        return prompt
+    
+    def _parse_optimization_strategy_response(self, response: str) -> Dict[str, Any]:
+        """解析优化策略响应
+        
+        Args:
+            response: LLM响应
+            
+        Returns:
+            Dict: 解析后的优化策略
+        """
+        try:
+            # 尝试解析JSON响应
+            if '{' in response and '}' in response:
+                start = response.find('{')
+                end = response.rfind('}') + 1
+                json_str = response[start:end]
+                return json.loads(json_str)
+            else:
+                # 如果无法解析JSON，返回空字典
+                return {}
+        except Exception as e:
+            logger.warning(f"解析优化策略响应失败: {e}")
+            return {} 

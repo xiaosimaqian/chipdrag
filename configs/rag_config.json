@@ -120,13 +120,13 @@
         "chunk_overlap": 200
     },
     "knowledge_base": {
-        "path": "data/knowledge_base",
+        "path": "data/knowledge_base/layout_experience/cases.pkl",
         "layout_experience": "data/knowledge_base/layout_experience",
         "design_patterns": "data/knowledge_base/design_patterns",
         "constraints": "data/knowledge_base/constraints",
         "index_type": "faiss",
         "similarity_metric": "cosine",
-        "format": "json"
+        "format": "pickle"
     },
     "logging": {
         "level": "INFO",

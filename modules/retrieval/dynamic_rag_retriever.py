@@ -582,7 +582,7 @@ class DynamicRAGRetriever:
                         suggestion, entity_embeddings, design_info
                     )
                     enhanced_suggestions.append(enhanced_suggestion)
-                else:
+            else:
                     enhanced_suggestions.append(suggestion)
             enhanced_knowledge['layout_suggestions'] = enhanced_suggestions
         

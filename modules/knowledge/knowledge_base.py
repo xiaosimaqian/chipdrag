@@ -134,7 +134,16 @@ class KnowledgeBase:
             List[Dict]: 知识列表
         """
         try:
-            # 优先尝试加载cases.pkl（真实ISPD数据）
+            # 优先尝试加载layout_experience/cases.pkl（扩展的151个案例）
+            layout_cases_file = os.path.join(self.layout_experience_path, "cases.pkl")
+            if os.path.exists(layout_cases_file) and os.path.getsize(layout_cases_file) > 1000:
+                logger.info(f"加载扩展案例数据: {layout_cases_file}")
+                with open(layout_cases_file, 'rb') as f:
+                    data = pickle.load(f)
+                logger.info(f"成功加载 {len(data)} 个扩展案例")
+                return data
+            
+            # 其次尝试加载cases.pkl（真实ISPD数据）
             cases_file = os.path.join(self.layout_experience_path, "cases.pkl")
             if os.path.exists(cases_file) and os.path.getsize(cases_file) > 1000:  # 确保文件有实际内容
                 logger.info(f"加载真实ISPD案例数据: {cases_file}")
@@ -143,7 +152,18 @@ class KnowledgeBase:
                 logger.info(f"成功加载 {len(data)} 个真实ISPD案例")
                 return data
             
-            # 如果cases.pkl不存在或为空，尝试加载data.pkl
+            # 如果cases.pkl不存在或为空，尝试加载JSON格式的案例数据
+            if self.format == 'json' and os.path.exists(self.path):
+                logger.info(f"加载JSON格式案例数据: {self.path}")
+                try:
+                    with open(self.path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    logger.info(f"成功加载 {len(data)} 个JSON案例")
+                    return data
+                except Exception as e:
+                    logger.error(f"加载JSON案例数据失败: {str(e)}")
+            
+            # 如果JSON加载失败，尝试加载data.pkl
             if os.path.exists(self.data_file):
                 logger.info(f"加载知识库文件: {self.data_file}")
                 # 检查文件大小
@@ -158,13 +178,13 @@ class KnowledgeBase:
                 # 确保返回的是列表
                 if data is None:
                     return []
-                    
+                
                 logger.info(f"从data.pkl加载了 {len(data)} 个案例")
                 return data
             else:
                 logger.info(f"知识库文件不存在: {self.data_file}")
                 return []
-            
+                
         except Exception as e:
             logger.error(f"加载知识库数据失败: {str(e)}")
             return []
@@ -449,18 +469,21 @@ class KnowledgeBase:
             similarities = []
             for case in self.cases:
                 try:
+                    # 从案例中提取特征用于相似度计算
+                    case_features = self._extract_case_features_for_similarity(case)
+                    
                     # 使用改进的相似度计算
-                    similarity = self._compute_similarity(query_features, case.get('features', {}))
+                    similarity = self._compute_similarity(query_features, case_features)
                     
                     similarities.append({
                         'case': case,
                         'similarity': similarity
                     })
-                    
+                        
                 except Exception as e:
                     logger.error(f"计算案例相似度失败: {str(e)}")
                     continue
-            
+                    
             # 按相似度排序
             similarities.sort(key=lambda x: x['similarity'], reverse=True)
             
@@ -520,27 +543,27 @@ class KnowledgeBase:
         try:
             if not features1 or not features2:
                 return 0.0
-            
+                
             total_score = 0.0
             total_weight = 0.0
             
-            # 1. 组件数量相似度 (权重: 0.25)
+            # 1. 组件数量相似度 (权重: 0.20)
             if 'num_components' in features1 and 'num_components' in features2:
                 comp1 = features1['num_components']
                 comp2 = features2['num_components']
                 if comp1 > 0 and comp2 > 0:
                     comp_sim = 1.0 - abs(comp1 - comp2) / max(comp1, comp2)
-                    total_score += comp_sim * 0.25
-                    total_weight += 0.25
+                    total_score += comp_sim * 0.20
+                    total_weight += 0.20
             
-            # 2. 面积相似度 (权重: 0.20)
+            # 2. 面积相似度 (权重: 0.15)
             if 'area' in features1 and 'area' in features2:
                 area1 = features1['area']
                 area2 = features2['area']
                 if area1 > 0 and area2 > 0:
                     area_sim = 1.0 - abs(area1 - area2) / max(area1, area2)
-                    total_score += area_sim * 0.20
-                    total_weight += 0.20
+                    total_score += area_sim * 0.15
+                    total_weight += 0.15
             
             # 3. 组件密度相似度 (权重: 0.15)
             if 'component_density' in features1 and 'component_density' in features2:
@@ -550,15 +573,23 @@ class KnowledgeBase:
                 total_score += density_sim * 0.15
                 total_weight += 0.15
             
-            # 4. 层次结构相似度 (权重: 0.20)
+            # 4. 复杂度相似度 (权重: 0.15)
+            if 'complexity' in features1 and 'complexity' in features2:
+                complexity1 = features1['complexity']
+                complexity2 = features2['complexity']
+                complexity_sim = 1.0 - abs(complexity1 - complexity2)
+                total_score += complexity_sim * 0.15
+                total_weight += 0.15
+            
+            # 5. 层次结构相似度 (权重: 0.15)
             if 'hierarchy' in features1 and 'hierarchy' in features2:
                 hierarchy1 = features1['hierarchy']
                 hierarchy2 = features2['hierarchy']
                 hierarchy_sim = self._compute_hierarchy_similarity(hierarchy1, hierarchy2)
-                total_score += hierarchy_sim * 0.20
-                total_weight += 0.20
+                total_score += hierarchy_sim * 0.15
+                total_weight += 0.15
             
-            # 5. 约束条件相似度 (权重: 0.20)
+            # 6. 约束条件相似度 (权重: 0.20)
             if 'constraints' in features1 and 'constraints' in features2:
                 constraints1 = features1['constraints']
                 constraints2 = features2['constraints']
@@ -571,17 +602,17 @@ class KnowledgeBase:
                 return total_score / total_weight
             else:
                 return 0.0
-                
+            
         except Exception as e:
             logger.error(f"相似度计算失败: {str(e)}")
             return 0.0
-    
+            
     def _compute_hierarchy_similarity(self, hierarchy1: Dict, hierarchy2: Dict) -> float:
         """计算层次结构相似度"""
         try:
             if not hierarchy1 or not hierarchy2:
                 return 0.0
-            
+                
             # 提取模块列表
             modules1 = set(hierarchy1.get('modules', []))
             modules2 = set(hierarchy2.get('modules', []))
@@ -597,17 +628,125 @@ class KnowledgeBase:
                 return intersection / union
             else:
                 return 0.0
-                
+            
         except Exception as e:
             logger.error(f"层次结构相似度计算失败: {str(e)}")
             return 0.0
-    
+            
+    def _extract_case_features_for_similarity(self, case: Dict) -> Dict:
+        """从案例中提取特征用于相似度计算
+        
+        Args:
+            case: 案例数据
+            
+        Returns:
+            Dict: 提取的特征
+        """
+        try:
+            features = {}
+            
+            # 从metadata中提取基本信息
+            metadata = case.get('metadata', {})
+            optimization_result = case.get('optimization_result', {})
+            
+            # 1. 组件数量 - 从port_count估算，使用更合理的估算方法
+            port_count = metadata.get('port_count', 0)
+            if port_count > 0:
+                # 根据设计类型和复杂度调整估算系数
+                design_type = metadata.get('design_type', '')
+                complexity = metadata.get('complexity', 0.5)
+                
+                # 不同设计类型的组件密度不同
+                if '超大规模' in design_type:
+                    multiplier = 50  # 超大规模设计组件密度高
+                elif 'FFT' in design_type or '变换' in design_type:
+                    multiplier = 30  # FFT设计组件密度中等
+                elif 'PCI' in design_type or '桥接' in design_type:
+                    multiplier = 20  # PCI桥接组件密度较低
+                else:
+                    multiplier = 25  # 默认值
+                
+                # 根据复杂度调整
+                complexity_factor = 0.5 + complexity  # 复杂度越高，组件数越多
+                features['num_components'] = int(port_count * multiplier * complexity_factor)
+            else:
+                # 如果没有port_count，尝试从其他信息估算
+                design_type = metadata.get('design_type', '')
+                if '超大规模' in design_type:
+                    features['num_components'] = 50000
+                elif 'FFT' in design_type:
+                    features['num_components'] = 30000
+                elif 'PCI' in design_type:
+                    features['num_components'] = 15000
+                else:
+                    features['num_components'] = 20000
+            
+            # 2. 面积 - 从optimization_result中获取
+            area = optimization_result.get('area', 0)
+            if area <= 0:
+                # 如果area为0，尝试从core_bbox估算
+                core_bbox = metadata.get('core_bbox', '')
+                if core_bbox and 'um' in core_bbox:
+                    try:
+                        # 解析bbox格式: "( x1 y1 ) ( x2 y2 ) um"
+                        bbox_parts = core_bbox.replace('(', '').replace(')', '').replace('um', '').split()
+                        if len(bbox_parts) >= 4:
+                            x1, y1, x2, y2 = map(float, bbox_parts[:4])
+                            area = (x2 - x1) * (y2 - y1)
+                    except:
+                        area = 1000000  # 默认面积
+                else:
+                    area = 1000000  # 默认面积
+            
+            features['area'] = area
+            
+            # 3. 组件密度 - 基于面积和组件数量计算
+            if area > 0 and features['num_components'] > 0:
+                features['component_density'] = features['num_components'] / area
+            else:
+                features['component_density'] = 0.1  # 默认值
+            
+            # 4. 层次结构 - 从metadata中提取
+            design_type = metadata.get('design_type', '')
+            features['hierarchy'] = {
+                'levels': ['top'],
+                'modules': [design_type] if design_type else ['default']
+            }
+            
+            # 5. 约束条件 - 从metadata中提取
+            constraints_list = metadata.get('constraints', [])
+            features['constraints'] = {
+                'timing': {'max_delay': 1000},  # 默认值
+                'power': {'max_power': 1000},   # 默认值
+                'special_nets': len(constraints_list)
+            }
+            
+            # 如果有具体的约束信息，更新约束条件
+            if 'area' in constraints_list:
+                features['constraints']['area'] = {'max_area': area}
+            
+            # 6. 添加复杂度信息
+            features['complexity'] = metadata.get('complexity', 0.5)
+            
+            return features
+            
+        except Exception as e:
+            logger.error(f"提取案例特征失败: {str(e)}")
+            return {
+                'num_components': 1000,
+                'area': 100000000,
+                'component_density': 0.1,
+                'hierarchy': {'levels': ['top'], 'modules': ['default']},
+                'constraints': {'timing': {'max_delay': 1000}, 'power': {'max_power': 1000}, 'special_nets': 2},
+                'complexity': 0.5
+            }
+        
     def _compute_constraint_similarity(self, constraints1: Dict, constraints2: Dict) -> float:
         """计算约束条件相似度"""
         try:
             if not constraints1 or not constraints2:
                 return 0.0
-            
+                
             total_score = 0.0
             total_weight = 0.0
             
@@ -648,11 +787,11 @@ class KnowledgeBase:
                 return total_score / total_weight
             else:
                 return 0.0
-                
+            
         except Exception as e:
             logger.error(f"约束条件相似度计算失败: {str(e)}")
             return 0.0
-    
+        
     def hierarchical_decomposition(self, design_info: Dict) -> Dict:
         """对设计进行层次化分解
         
@@ -1098,9 +1237,19 @@ class KnowledgeBase:
             # 确保目录存在
             os.makedirs(path, exist_ok=True)
             
-            # 加载案例数据 - 修复：直接加载cases.pkl
-            cases_file = os.path.join(path, "cases.pkl")
-            if os.path.exists(cases_file):
+            # 优先尝试加载JSON格式的案例数据
+            if self.format == 'json' and os.path.exists(self.path):
+                try:
+                    with open(self.path, 'r', encoding='utf-8') as f:
+                        self.cases = json.load(f)
+                    logger.info(f"成功加载JSON案例数据，包含 {len(self.cases)} 个案例")
+                except Exception as e:
+                    logger.error(f"加载JSON案例数据失败: {str(e)}")
+                    self.cases = []
+            
+            # 如果JSON加载失败，尝试加载cases.pkl
+            elif os.path.exists(os.path.join(path, "cases.pkl")):
+                cases_file = os.path.join(path, "cases.pkl")
                 try:
                     with open(cases_file, 'rb') as f:
                         self.cases = pickle.load(f)
@@ -1109,7 +1258,7 @@ class KnowledgeBase:
                     logger.error(f"加载案例数据失败: {str(e)}")
                     self.cases = []
             else:
-                logger.warning(f"案例文件不存在: {cases_file}")
+                logger.warning(f"案例文件不存在")
                 self.cases = []
                 
             # 加载知识图谱

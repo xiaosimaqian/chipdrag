@@ -27,8 +27,8 @@ def main():
         def_file = design_dir / 'floorplan.def'
         if def_file.exists():
             clean_tracks_from_def(def_file)
-        else:
+            else:
             print(f"[WARN] {def_file} 不存在")
-
+    
 if __name__ == '__main__':
     main() 
