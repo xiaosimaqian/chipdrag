@@ -13,6 +13,7 @@ from transformers import AutoTokenizer, AutoModel, AutoModelForCausalLM
 import requests
 import time
 from datetime import datetime
+from .json_parser import RobustJSONParser
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +94,12 @@ class LLMManager:
             self.tokenizer = None
             self.model = None
         
-    def _call_ollama(self, prompt: str) -> str:
+    def _call_ollama(self, prompt: str, interaction_type: str = "general") -> str:
         """调用Ollama API
         
         Args:
             prompt: 提示文本
+            interaction_type: 交互类型，用于日志记录
             
         Returns:
             str: API响应
@@ -105,8 +107,13 @@ class LLMManager:
         # 添加调试日志
         logger.info(f"Ollama调用模型: {self.model}, base_url: {self.base_url}")
         
-        max_retries = 3
-        retry_delay = 1  # 秒
+        # 记录查询内容
+        logger.info(f"=== LLM {interaction_type.upper()} 查询 ===")
+        logger.info(f"查询内容:\n{prompt}")
+        
+        max_retries = 5
+        retry_delay = 3  # 秒
+        start_time = datetime.now()
         
         for attempt in range(max_retries):
             try:
@@ -119,7 +126,7 @@ class LLMManager:
                         "max_tokens": self.max_tokens,
                         "stream": False
                     },
-                    timeout=30  # 设置超时时间
+                    timeout=120  # 增加超时时间到120秒
                 )
                 response.raise_for_status()
                 
@@ -129,18 +136,26 @@ class LLMManager:
                     if response.headers.get('content-type', '').startswith('application/json'):
                         result = response.json()
                         if isinstance(result, dict) and 'response' in result:
-                            return result['response']
+                            response_text = result['response']
                         else:
                             logger.warning(f"意外的响应格式: {result}")
-                            return ""
+                            response_text = ""
                     else:
                         # 处理文本响应
-                        text_response = response.text.strip()
-                        if text_response:
-                            return text_response
-                        else:
+                        response_text = response.text.strip()
+                        if not response_text:
                             logger.warning("空响应")
-                            return ""
+                            response_text = ""
+                    
+                    # 记录响应内容
+                    end_time = datetime.now()
+                    duration = (end_time - start_time).total_seconds()
+                    
+                    logger.info(f"=== LLM {interaction_type.upper()} 响应 ===")
+                    logger.info(f"响应内容:\n{response_text}")
+                    logger.info(f"响应时间: {duration:.2f}秒")
+                    
+                    return response_text
                             
                 except json.JSONDecodeError as e:
                     logger.error(f"JSON解析错误: {e}")
@@ -502,8 +517,16 @@ class LLMManager:
             # 构建设计分析提示
             prompt = self._build_design_analysis_prompt(design_info)
             
+            # 记录LLM查询内容
+            logger.info(f"=== LLM设计分析查询 ===")
+            logger.info(f"查询内容:\n{prompt}")
+            
             # 调用LLM
             response = self._call_ollama(prompt)
+            
+            # 记录LLM响应内容
+            logger.info(f"=== LLM设计分析响应 ===")
+            logger.info(f"响应内容:\n{response}")
             
             # 解析响应
             analysis = self._parse_design_analysis_response(response)
@@ -823,8 +846,16 @@ class LLMManager:
             # 构建布局策略生成提示
             prompt = self._build_layout_strategy_prompt(design_analysis, knowledge)
             
+            # 记录LLM查询内容
+            logger.info(f"=== LLM布局策略查询 ===")
+            logger.info(f"查询内容:\n{prompt}")
+            
             # 调用LLM
             response = self._call_ollama(prompt)
+            
+            # 记录LLM响应内容
+            logger.info(f"=== LLM布局策略响应 ===")
+            logger.info(f"响应内容:\n{response}")
             
             # 解析响应
             strategy = self._parse_layout_strategy_response(response)
@@ -863,6 +894,10 @@ class LLMManager:
                         'version': '1.0'
                     }
                 }
+            
+            # 确保placement_strategy字段存在
+            if 'placement_strategy' not in strategy:
+                strategy['placement_strategy'] = strategy.get('algorithm', 'hierarchical')
             
             return strategy
             
@@ -935,6 +970,18 @@ class LLMManager:
 - quality_targets: 质量目标
 - execution_plan: 执行计划列表
 - metadata: 元数据信息
+
+请严格只返回一个JSON对象，包含以下字段，不要输出任何解释、注释或自然语言说明：
+{{
+  "placement_strategy": "...",
+  "routing_strategy": "...",
+  "optimization_priorities": [...],
+  "parameter_suggestions": {{...}},
+  "constraint_handling": {{...}},
+  "quality_targets": {{...}},
+  "execution_plan": [...],
+  "metadata": {{...}}
+}}
 """
         return prompt
     
@@ -947,19 +994,7 @@ class LLMManager:
         Returns:
             Dict: 解析后的布局策略
         """
-        try:
-            # 尝试解析JSON响应
-            if '{' in response and '}' in response:
-                start = response.find('{')
-                end = response.rfind('}') + 1
-                json_str = response[start:end]
-                return json.loads(json_str)
-            else:
-                # 如果无法解析JSON，返回空字典
-                return {}
-        except Exception as e:
-            logger.warning(f"解析布局策略响应失败: {e}")
-            return {}
+        return RobustJSONParser.parse_llm_response(response, "layout_strategy")
     
     def apply_layout_strategy(self,
                             design_info: Dict[str, Any],
@@ -989,8 +1024,16 @@ class LLMManager:
             # 构建布局分析提示
             prompt = self._build_layout_analysis_prompt(layout)
             
+            # 记录LLM查询内容
+            logger.info(f"=== LLM布局分析查询 ===")
+            logger.info(f"查询内容:\n{prompt}")
+            
             # 调用LLM
             response = self._call_ollama(prompt)
+            
+            # 记录LLM响应内容
+            logger.info(f"=== LLM布局分析响应 ===")
+            logger.info(f"响应内容:\n{response}")
             
             # 解析响应
             analysis = self._parse_layout_analysis_response(response)
@@ -1097,33 +1140,76 @@ class LLMManager:
             Dict: 解析后的分析结果
         """
         try:
-            # 尝试提取JSON部分
+            # 清理响应文本
+            cleaned_response = response.strip()
+            
+            # 尝试多种JSON提取方法
             import re
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                import json
-                return json.loads(json_match.group())
-            else:
-                # 如果无法解析JSON，返回默认结构
-                return {
-                    'quality_score': 0.75,
-                    'area_utilization': 0.8,
-                    'routing_quality': 0.7,
-                    'timing_performance': 0.8,
-                    'power_distribution': 0.75,
-                    'issues': ['响应解析成功'],
-                    'suggestions': ['基于分析结果进行优化'],
-                    'needs_optimization': False,
-                    'optimization_priority': 'low',
-                    'metadata': {
-                        'source': 'llm_layout_analysis',
-                        'timestamp': datetime.now().isoformat(),
-                        'version': '1.0'
-                    }
+            
+            # 方法1: 使用正则表达式提取JSON
+            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+            matches = re.findall(json_pattern, cleaned_response, re.DOTALL)
+            
+            if matches:
+                for match in matches:
+                    try:
+                        parsed = json.loads(match)
+                        logger.info("成功解析布局分析JSON")
+                        return parsed
+                    except json.JSONDecodeError:
+                        continue
+            
+            # 方法2: 查找完整的JSON对象
+            if '{' in cleaned_response and '}' in cleaned_response:
+                start = cleaned_response.find('{')
+                end = cleaned_response.rfind('}') + 1
+                json_str = cleaned_response[start:end]
+                
+                try:
+                    parsed = json.loads(json_str)
+                    logger.info("成功解析完整布局分析JSON")
+                    return parsed
+                except json.JSONDecodeError:
+                    pass
+            
+            # 方法3: 如果都失败了，返回默认结构
+            logger.warning("布局分析JSON解析失败，返回默认结构")
+            return {
+                'quality_score': 0.75,
+                'area_utilization': 0.8,
+                'routing_quality': 0.7,
+                'timing_performance': 0.8,
+                'power_distribution': 0.75,
+                'issues': ['布局分析完成'],
+                'suggestions': ['建议进一步优化'],
+                'needs_optimization': False,
+                'optimization_priority': 'low',
+                'metadata': {
+                    'source': 'fallback_analysis',
+                    'timestamp': datetime.now().isoformat(),
+                    'version': '1.0',
+                    'original_response': cleaned_response[:200] + "..." if len(cleaned_response) > 200 else cleaned_response
                 }
+            }
         except Exception as e:
             logger.warning(f"解析布局分析响应失败: {e}")
-            return {}
+            return {
+                'quality_score': 0.5,
+                'area_utilization': 0.5,
+                'routing_quality': 0.5,
+                'timing_performance': 0.5,
+                'power_distribution': 0.5,
+                'issues': [f'解析失败: {str(e)}'],
+                'suggestions': ['请检查布局数据'],
+                'needs_optimization': True,
+                'optimization_priority': 'high',
+                'metadata': {
+                    'source': 'error_fallback',
+                    'timestamp': datetime.now().isoformat(),
+                    'version': '1.0',
+                    'error': str(e)
+                }
+            }
     
     def optimize_layout(self, layout_result: Dict, constraints: Dict) -> Dict:
         """优化布局结果

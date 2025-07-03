@@ -14,9 +14,9 @@
             "repetition_penalty": 1.1,
             "stop_sequences": ["", "Human:", "Assistant:"],
             "context_window": 4096,
-            "timeout": 60,
-            "retry_attempts": 3,
-            "retry_delay": 2
+            "timeout": 120,
+            "retry_attempts": 5,
+            "retry_delay": 5
         },
         "code": {
             "name": "deepseek-coder:latest",

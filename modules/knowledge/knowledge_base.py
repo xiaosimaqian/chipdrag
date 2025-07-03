@@ -163,7 +163,7 @@ class KnowledgeBase:
                 except Exception as e:
                     logger.error(f"加载JSON案例数据失败: {str(e)}")
             
-            # 如果JSON加载失败，尝试加载data.pkl
+              # 如果JSON加载失败，尝试加载data.pkl
             if os.path.exists(self.data_file):
                 logger.info(f"加载知识库文件: {self.data_file}")
                 # 检查文件大小
@@ -184,7 +184,6 @@ class KnowledgeBase:
             else:
                 logger.info(f"知识库文件不存在: {self.data_file}")
                 return []
-                
         except Exception as e:
             logger.error(f"加载知识库数据失败: {str(e)}")
             return []
@@ -300,8 +299,8 @@ class KnowledgeBase:
             # 提取元数据信息
             if 'metadata' in layout and layout['metadata']:
                 features['has_metadata'] = True
-                if 'description' in layout['metadata']:
-                    features['has_description'] = True
+                if 'dexceptription' in layout['metadata']:
+                    features['has_dexceptription'] = True
                 if 'author' in layout['metadata']:
                     features['has_author'] = True
                 if 'date' in layout['metadata']:

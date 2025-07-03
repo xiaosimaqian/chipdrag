@@ -148,6 +148,35 @@ class QLearningAgent:
         self.logger.debug(f"选择动作: k={k_value}, 类型={exploration_type}, 置信度={confidence:.3f}")
         return action
     
+    def select_action(self, state: State, training: bool = True, epsilon: Optional[float] = None) -> Action:
+        """选择动作（兼容接口）
+        
+        Args:
+            state: 当前状态
+            training: 是否为训练模式
+            epsilon: 可选的探索率覆盖
+            
+        Returns:
+            Action: 选择的动作
+        """
+        # 保存原始探索率
+        original_epsilon = self.epsilon
+        
+        # 如果指定了epsilon，临时使用它
+        if epsilon is not None:
+            self.epsilon = epsilon
+        
+        # 如果不是训练模式，设置为纯利用
+        if not training:
+            self.epsilon = 0.0
+        
+        try:
+            action = self.choose_action(state)
+            return action
+        finally:
+            # 恢复原始探索率
+            self.epsilon = original_epsilon
+    
     def update(self, state: State, action: Action, reward: float, next_state: State):
         """更新Q值
         

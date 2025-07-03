@@ -139,7 +139,7 @@ class RealOpenROADInterface:
         # 使用动态参数生成TCL脚本
         utilization = int(density_target * 100)
         site_info = self._get_site_info()
-        tcl_script = f"""
+            tcl_script = f"""
 # OpenROAD布局优化脚本 (智能参数版本 + 并行加速)
 # 设计: {self.verilog_file.name}
 # 参数: density_target={density_target}, utilization={utilization}, die_size={die_size}x{die_size}, core_size={core_size}x{core_size}
@@ -363,8 +363,8 @@ puts "布局实例数: $final_placed_count/$final_total_count"
                 'bash', '-c',
                 f'export PATH=/OpenROAD-flow-scripts/tools/install/OpenROAD/bin:$PATH && openroad -exit {os.path.basename(tcl_file)}'
             ], capture_output=True, text=True, timeout=timeout)
-            execution_time = time.time() - start_time
-            
+                execution_time = time.time() - start_time
+                
             # 分析输出
             stdout_lines = result.stdout.split('\n')
             stderr_lines = result.stderr.split('\n')
@@ -527,12 +527,12 @@ puts "布局实例数: $final_placed_count/$final_total_count"
             for line in lines:
                 if 'HPWL:' in line and 'InitialPlace' in line:
                     try:
-                        import re
+                    import re
                         hpwl_match = re.search(r'HPWL:\s*([0-9]+)', line)
                         if hpwl_match:
                             hpwl_value = int(hpwl_match.group(1))
                             hpwl_values.append(hpwl_value)
-                    except:
+                except:
                         continue
             
             # 使用最后一个HPWL值（最终结果）
@@ -542,34 +542,34 @@ puts "布局实例数: $final_placed_count/$final_total_count"
             # 提取密度信息
             for line in lines:
                 if 'target density:' in line.lower():
-                    try:
-                        import re
+                try:
+                    import re
                         density_match = re.search(r'target density:\s*([0-9.]+)', line)
                         if density_match:
                             metrics['density'] = float(density_match.group(1))
-                    except:
+                except:
                         continue
             
             # 提取溢出信息
             for line in lines:
                 if 'overflow:' in line.lower() and 'finished' in line.lower():
-                    try:
-                        import re
+                try:
+                    import re
                         overflow_match = re.search(r'overflow:\s*([0-9.]+)', line)
                         if overflow_match:
                             metrics['overflow'] = float(overflow_match.group(1))
-                    except:
+                except:
                         continue
             
             # 提取利用率信息
             for line in lines:
                 if 'utilization:' in line.lower():
-                    try:
-                        import re
+                try:
+                    import re
                         util_match = re.search(r'utilization:\s*([0-9.]+)', line)
                         if util_match:
                             metrics['utilization'] = float(util_match.group(1)) / 100.0
-                    except:
+                except:
                         continue
             
         except Exception as e:
