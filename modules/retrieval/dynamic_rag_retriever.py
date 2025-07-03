@@ -241,7 +241,7 @@ class DynamicRAGRetriever:
             
             # 检查Q表是否有数据
             if state_key in self.rl_agent['q_table'] and self.rl_agent['q_table'][state_key]:
-                # 使用Q-learning选择k值
+            # 使用Q-learning选择k值
                 if random.random() < self.rl_agent['epsilon']:
                     # 探索：随机选择k值
                     k = random.randint(self.dynamic_k_range[0], self.dynamic_k_range[1])
@@ -482,8 +482,8 @@ class DynamicRAGRetriever:
                     
                     # 确保实体嵌入不为空
                     if result.entity_embeddings is None or np.all(result.entity_embeddings == 0):
-                        # 生成随机但合理的实体嵌入
-                        result.entity_embeddings = np.random.rand(self.compressed_entity_dim) * 0.1 + 0.05
+                        # 基于设计特征生成确定性的实体嵌入
+                        result.entity_embeddings = self._generate_deterministic_embeddings(design_info)
                     
                     # 注入实体信息到知识中
                     enhanced_knowledge = self._inject_entities_into_knowledge(
@@ -505,7 +505,7 @@ class DynamicRAGRetriever:
             return results  # 返回原结果
     
     def _generate_design_based_embeddings(self, design_info: Dict[str, Any]) -> np.ndarray:
-        """基于设计特征生成实体嵌入"""
+        """基于设计特征生成确定性实体嵌入"""
         try:
             features = design_info.get('features', {})
             
@@ -534,14 +534,20 @@ class DynamicRAGRetriever:
                 if component_density > 0:
                     embedding[3] = min(component_density * 1e6, 1.0)  # 归一化
                 
-                # 其他特征
+                # 其他特征 - 使用确定性计算
                 for i, (key, value) in enumerate(features.items()):
                     if i + 4 < self.compressed_entity_dim and isinstance(value, (int, float)):
-                        embedding[i + 4] = min(abs(value) / 1000, 1.0)  # 归一化
+                        # 使用哈希值创建确定性特征
+                        hash_val = hash(f"{key}_{value}") % 1000
+                        embedding[i + 4] = min(abs(hash_val) / 1000, 1.0)  # 归一化
             
-            # 添加一些随机性
-            noise = np.random.rand(self.compressed_entity_dim) * 0.1
-            embedding += noise
+            # 基于设计名称添加确定性变化
+            design_name = design_info.get('name', 'default')
+            name_hash = hash(design_name) % 100
+            name_factor = name_hash / 1000.0  # 0-0.1范围的确定性因子
+            
+            # 应用确定性调整
+            embedding = embedding * (1.0 + name_factor)
             
             # 确保嵌入在合理范围内
             embedding = np.clip(embedding, 0.0, 1.0)
@@ -550,8 +556,27 @@ class DynamicRAGRetriever:
             
         except Exception as e:
             self.logger.error(f"生成设计特征嵌入失败: {e}")
-            # 返回随机嵌入
-            return np.random.rand(self.compressed_entity_dim) * 0.1 + 0.05
+            # 返回基于设计信息的确定性默认嵌入
+            return self._generate_deterministic_embeddings(design_info)
+
+    def _generate_deterministic_embeddings(self, design_info: Dict[str, Any]) -> np.ndarray:
+        """生成确定性的默认实体嵌入"""
+        # 基于设计信息生成确定性嵌入
+        design_name = design_info.get('name', 'default')
+        design_type = design_info.get('type', 'unknown')
+        
+        # 使用设计名称和类型的哈希值
+        name_hash = hash(design_name) % 1000
+        type_hash = hash(design_type) % 1000
+        
+        # 创建确定性嵌入
+        embedding = np.zeros(self.compressed_entity_dim)
+        for i in range(self.compressed_entity_dim):
+            # 基于位置、名称哈希和类型哈希生成确定性值
+            val = (name_hash + type_hash + i * 17) % 1000
+            embedding[i] = val / 1000.0  # 0-1范围
+        
+        return embedding
     
     def _inject_entities_into_knowledge(self, 
                                       knowledge: Dict[str, Any], 

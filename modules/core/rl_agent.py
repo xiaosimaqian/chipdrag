@@ -355,6 +355,58 @@ class StateExtractor:
         self.performance_cache = defaultdict(list)
         self.cache_size = config.get('performance_cache_size', 1000)
     
+    def extract_state(self, design_info: Dict[str, Any]) -> State:
+        """从设计信息中提取完整的RL状态
+        
+        Args:
+            design_info: 设计信息字典，包含真实的设计数据
+            
+        Returns:
+            State: 完整的状态对象
+        """
+        try:
+            # 构造基于设计信息的查询
+            query = {
+                'text': f"Layout optimization for design with {design_info.get('num_components', 0)} components",
+                'type': 'layout_optimization',
+                'design_type': design_info.get('design_type', 'unknown'),
+                'constraints': design_info.get('constraints', {}),
+                'iteration': design_info.get('current_iteration', 0)
+            }
+            
+            # 构造初始结果（基于设计特征）
+            initial_results = []
+            
+            # 使用完整的状态提取方法
+            return self.extract_state_features(query, design_info, initial_results)
+            
+        except Exception as e:
+            self.logger.error(f"状态提取失败: {e}")
+            # 返回基于真实设计信息的默认状态
+            return State(
+                query_complexity=self._calculate_design_complexity(design_info),
+                query_length=len(str(design_info.get('num_components', 0))),
+                query_type='layout_optimization',
+                design_type=design_info.get('design_type', 'unknown'),
+                design_size=design_info.get('num_components', 0),
+                design_area=design_info.get('area', 0.0),
+                constraint_count=len(design_info.get('constraints', {})),
+                constraint_types=list(design_info.get('constraints', {}).keys()),
+                initial_relevance=0.5,
+                result_diversity=0.5,
+                knowledge_coverage=0.5,
+                entity_count=design_info.get('num_components', 0),
+                historical_performance=0.5,
+                recent_success_rate=0.5,
+                average_quality_score=0.5,
+                current_iteration=design_info.get('current_iteration', 0),
+                optimization_stage=self._determine_optimization_stage(
+                    design_info.get('current_iteration', 0), 
+                    self._calculate_design_complexity(design_info)
+                ),
+                timestamp=datetime.now().isoformat()
+            )
+    
     def extract_state_features(self, 
                              query: Dict[str, Any], 
                              design_info: Dict[str, Any],
@@ -629,6 +681,33 @@ class StateExtractor:
             return 'refinement'
         else:
             return 'final'
+    
+    def _calculate_design_complexity(self, design_info: Dict[str, Any]) -> float:
+        """计算设计复杂度
+        
+        Args:
+            design_info: 设计信息
+            
+        Returns:
+            float: 复杂度分数 (0-1)
+        """
+        complexity = 0.0
+        
+        # 基于组件数量
+        num_components = design_info.get('num_components', 0)
+        if num_components > 0:
+            complexity += min(num_components / 10000.0, 1.0) * 0.4
+        
+        # 基于面积
+        area = design_info.get('area', 0)
+        if area > 0:
+            complexity += min(area / 1e9, 1.0) * 0.3
+        
+        # 基于约束数量
+        constraint_count = len(design_info.get('constraints', {}))
+        complexity += min(constraint_count / 10.0, 1.0) * 0.3
+        
+        return min(complexity, 1.0)
 
 class RewardCalculator:
     """奖励计算器"""
