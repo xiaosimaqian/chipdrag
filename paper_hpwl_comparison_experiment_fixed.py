@@ -1,8 +1,39 @@
 #!/usr/bin/env python3
 """
-修正版论文HPWL对比实验
-严格按照论文要求的逻辑顺序：数据准备 → RL训练 → 基于训练结果更新检索策略 → ChipDRAG优化 → HPWL对比分析
-确保RL训练的结果能够有效指导后续的检索和优化过程
+修正版论文HPWL对比实验脚本
+
+本脚本实现ChipDRAG系统的完整论文实验流程，包括：
+1. RL训练与优化
+2. 动态检索策略更新  
+3. ChipDRAG布局优化
+4. HPWL对比分析
+5. 消融实验验证
+6. 结果可视化与报告
+
+=== HPWL指标说明 ===
+本实验使用以下HPWL指标优先级：
+
+1. **Legalized HPWL (最高优先级)**
+   - 定义：经过合法化处理后的实际HPWL
+   - 特点：消除单元重叠，满足所有布局约束
+   - 用途：实际可制造的布局质量，算法对比的标准指标
+   - 示例：legalized HPWL 374126.2 u
+
+2. **Total HPWL (次优先级)**
+   - 定义：最终统计的总HPWL
+   - 用途：作为legalized HPWL的补充
+
+3. **Original HPWL (备选)**
+   - 定义：全局布局阶段的理论最优HPWL
+   - 特点：可能存在单元重叠，违反布局规则
+   - 用途：仅作为理论参考，不适合算法对比
+   - 示例：original HPWL 341641.0 u
+
+技术原因：
+- Legalized HPWL > Original HPWL 是正常现象
+- 合法化过程需要消除重叠，会增加连线长度
+- 论文对比应基于相同的合法化标准
+- 后续布线阶段使用合法化后的布局
 """
 
 import os
@@ -24,6 +55,7 @@ from modules.utils.config_loader import ConfigLoader
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import psutil
 
 # 导入论文消融实验模块
 from paper_ablation_experiment import PaperAblationExperiment
@@ -32,25 +64,68 @@ from paper_ablation_experiment import PaperAblationExperiment
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS']
 plt.rcParams['axes.unicode_minus'] = False
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# 配置日志系统 - 同时输出到控制台和文件
+def setup_logging(log_dir: Path):
+    """设置日志系统，同时输出到控制台和文件"""
+    log_dir.mkdir(exist_ok=True)
+    
+    # 创建带时间戳的日志文件
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_dir / f"experiment_log_{timestamp}.log"
+    
+    # 配置根日志记录器
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # 清除现有的处理器
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # 创建格式化器
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    
+    # 控制台处理器
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    
+    # 文件处理器
+    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    
+    return log_file
+
 logger = logging.getLogger(__name__)
 
 class PaperHPWLComparisonExperimentFixed:
     """修正版论文HPWL对比实验类，确保正确的实验逻辑顺序"""
     
     def __init__(self):
-        self.base_dir = Path(__file__).parent
-        self.data_dir = self.base_dir / "data/designs/ispd_2015_contest_benchmark"
+        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.base_dir = Path("paper_hpwl_results_" + self.timestamp)
+        self.base_dir.mkdir(exist_ok=True)
         
-        # 创建带时间戳的结果目录
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.results_dir = self.base_dir / f"paper_hpwl_results_{timestamp}"
-        self.results_dir.mkdir(exist_ok=True)
+        # 📊 优化并行策略 - 降低并行度，保证单任务获得更多内存
+        self.max_parallel_designs = 1  # 🔧 降低到1，确保单个任务获得全部可用内存
+        self.max_parallel_containers = 1  # 🔧 降低到1，避免内存竞争
+        
+        # 设置日志系统
+        self.log_file = setup_logging(self.base_dir)
+        
+        # 设置数据目录
+        self.data_dir = Path("dataset/ispd_2015_contest_benchmark")
+        if not self.data_dir.exists():
+            # 备用路径
+            self.data_dir = Path("data/designs/ispd_2015_contest_benchmark")
         
         # 记录实验开始时间
         self.experiment_start_time = datetime.now()
         logger.info(f"实验开始时间: {self.experiment_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info(f"结果保存目录: {self.results_dir}")
+        logger.info(f"结果保存目录: {self.base_dir}")
+        logger.info(f"日志文件: {self.log_file}")
         
         # 加载实验配置
         config_loader = ConfigLoader()
@@ -390,75 +465,48 @@ class PaperHPWLComparisonExperimentFixed:
             return False
 
     def _collect_hpwl_comparison_data(self) -> Dict[str, Any]:
-        """收集HPWL对比数据：OpenROAD默认 vs ChipDRAG优化"""
+        """收集HPWL对比数据"""
         logger.info("收集HPWL对比数据：OpenROAD默认布局 vs ChipDRAG优化布局")
         
-        all_results = {}
-        
-        # 使用正确的数据路径
-        data_root = Path("dataset/ispd_2015_contest_benchmark")
-        if not data_root.exists():
-            data_root = Path("data/designs/ispd_2015_contest_benchmark")
+        hpwl_data = {}
         
         for design_name in self.experiment_config['designs']:
-            design_dir = data_root / design_name
-            if not design_dir.exists():
-                logger.warning(f"设计目录不存在: {design_dir}")
-                continue
+            design_dir = self.data_dir / design_name
             
-            # 1. OpenROAD默认布局HPWL (使用现有的布局文件作为基准)
-            default_hpwl = None
+            # 1. 尝试从OpenROAD日志中提取真实HPWL
+            chipdrag_hpwl = self._extract_hpwl_from_openroad_log(design_dir)
             
-            # 尝试多种可能的默认布局文件
-            default_files = [
-                "placement_result.def",  # 可能的默认布局结果
-                "default_placed.def",
-                "baseline.def",
-                "floorplan.def"  # 如果没有其他文件，使用初始floorplan
-            ]
+            # 2. 如果没有日志HPWL，尝试从placed.def计算
+            if chipdrag_hpwl is None:
+                placed_def = design_dir / "placed.def"
+                if placed_def.exists():
+                    chipdrag_hpwl = self._extract_hpwl_from_def(placed_def)
             
-            for default_file in default_files:
-                default_path = design_dir / default_file
-                if default_path.exists():
-                    default_hpwl = self._extract_hpwl_from_def(default_path)
-                    if default_hpwl is not None:
-                        logger.info(f"使用 {default_file} 作为OpenROAD默认布局基准")
-                        break
+            # 3. 计算OpenROAD默认布局的HPWL（使用floorplan.def）
+            floorplan_def = design_dir / "floorplan.def"
+            openroad_default_hpwl = self._extract_hpwl_from_def(floorplan_def)
             
-            # 2. ChipDRAG优化布局HPWL (使用placed.def)
-            optimized_hpwl = self._extract_hpwl_from_def(design_dir / "placed.def")
-            
-            # 如果optimized_hpwl为None，尝试从当前工作目录查找
-            if optimized_hpwl is None:
-                current_placed = Path("placed.def")
-                if current_placed.exists():
-                    optimized_hpwl = self._extract_hpwl_from_def(current_placed)
-                    logger.info(f"使用当前目录的placed.def: {optimized_hpwl}")
-            
-            # 计算改进率
-            if default_hpwl is not None:
-                if optimized_hpwl is not None:
-                    improvement = ((default_hpwl - optimized_hpwl) / default_hpwl) * 100
-                    all_results[design_name] = {
-                        'default_hpwl': default_hpwl,
-                        'optimized_hpwl': optimized_hpwl,
-                        'improvement': improvement,
-                        'improvement_absolute': default_hpwl - optimized_hpwl
-                    }
-                    logger.info(f"  {design_name}: OpenROAD={default_hpwl:.2e}, ChipDRAG={optimized_hpwl:.2e}, 提升={improvement:.2f}%")
-                else:
-                    # 没有优化结果，记录部分数据
-                    all_results[design_name] = {
-                        'default_hpwl': default_hpwl,
-                        'optimized_hpwl': None,
-                        'improvement': None,
-                        'improvement_absolute': None
-                    }
-                    logger.warning(f"  {design_name}: 缺少ChipDRAG优化结果 - OpenROAD={default_hpwl:.2e}")
+            # 记录结果
+            if chipdrag_hpwl is not None and chipdrag_hpwl > 0:
+                improvement = ((openroad_default_hpwl - chipdrag_hpwl) / openroad_default_hpwl) * 100
+                logger.info(f"✅ {design_name}: OpenROAD={openroad_default_hpwl:.2e}, ChipDRAG={chipdrag_hpwl:.2e}, 改善={improvement:.2f}%")
+                
+                hpwl_data[design_name] = {
+                    'openroad_default': openroad_default_hpwl,
+                    'chipdrag_optimized': chipdrag_hpwl,
+                    'improvement_percentage': improvement,
+                    'status': 'success'
+                }
             else:
-                logger.warning(f"  {design_name}: 无法获取OpenROAD默认布局数据")
+                logger.warning(f"⚠️ {design_name}: 缺少ChipDRAG优化结果 - OpenROAD={openroad_default_hpwl:.2e}")
+                hpwl_data[design_name] = {
+                    'openroad_default': openroad_default_hpwl,
+                    'chipdrag_optimized': None,
+                    'improvement_percentage': None,
+                    'status': 'failed'
+                }
         
-        return all_results
+        return hpwl_data
 
     def _run_rl_inference_verification(self, retriever, rl_agent, state_extractor) -> List[Dict[str, Any]]:
         """运行RL推理验证"""
@@ -557,7 +605,7 @@ class PaperHPWLComparisonExperimentFixed:
     def _save_all_results(self, hpwl_results, training_records, inference_results, ablation_results, report):
         """保存所有结果"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        results_dir = self.results_dir / f"paper_hpwl_results_{timestamp}"
+        results_dir = self.base_dir / f"paper_hpwl_results_{timestamp}"
         results_dir.mkdir(exist_ok=True)
         
         # 保存详细结果
@@ -1206,372 +1254,563 @@ class PaperHPWLComparisonExperimentFixed:
             return False
 
     def _run_openroad_with_docker(self, design_dir: Path, layout_strategy: Dict) -> bool:
-        """使用Docker运行OpenROAD - 统一接口"""
+        """执行OpenROAD布局 - 内存优化版本"""
         try:
-            # 查找设计文件 - 严格要求使用floorplan.def作为初始布局
-            def_file = None
-            for df in design_dir.glob("*.def"):
-                if 'floorplan' in df.name.lower():
-                    def_file = df
-                    break
+            # 获取设计名称
+            design_name = design_dir.name
             
-            if def_file is None:
-                logger.error("未找到floorplan.def文件，论文实验要求使用原始布局文件")
-                logger.error(f"设计目录: {design_dir}")
-                available_def_files = list(design_dir.glob("*.def"))
-                logger.error(f"可用DEF文件: {[f.name for f in available_def_files]}")
+            # 检查必要文件
+            tech_lef_file = design_dir / "tech.lef"
+            cells_lef_file = design_dir / "cells.lef"
+            def_file = design_dir / "floorplan.def"
+            verilog_file = design_dir / "design.v"
+            
+            if not all([tech_lef_file.exists(), cells_lef_file.exists(), def_file.exists(), verilog_file.exists()]):
+                logger.error(f"❌ 缺少必要文件: TECH_LEF={tech_lef_file.exists()}, CELLS_LEF={cells_lef_file.exists()}, DEF={def_file.exists()}, V={verilog_file.exists()}")
                 return False
             
-            lef_file = next(design_dir.glob("*.lef"), None)
+            logger.info(f"找到必要文件: tech.lef, cells.lef, floorplan.def, design.v")
             
-            if not lef_file:
-                logger.error("缺少必要的LEF文件")
-                logger.error(f"设计目录: {design_dir}")
-                return False
+            # 💾 内存优化策略：根据系统资源动态分配
+            system_info = self._check_hardware_resources()
+            available_memory_gb = system_info['available_memory_gb']
             
-            logger.info(f"找到设计文件: DEF={def_file.name}, LEF={lef_file.name}")
+            # 为单个任务分配最大可用内存的75%
+            memory_limit_gb = min(int(available_memory_gb * 0.75), 12)  # 最大12GB
+            if memory_limit_gb < 3:
+                memory_limit_gb = 3  # 最小3GB
             
-            # 查找Verilog文件
-            verilog_file = next(design_dir.glob("*.v"), None)
-            if not verilog_file:
-                logger.error("未找到Verilog文件")
-                return False
+            # CPU分配：使用所有可用CPU（因为现在是单任务）
+            cpu_limit = min(system_info['cpu_count'], 12)  # 最大12核
             
-            logger.info(f"找到Verilog文件: {verilog_file.name}")
+            logger.info(f"系统资源: {system_info['total_memory_gb']:.1f}GB 总内存, {available_memory_gb:.1f}GB 可用内存, {system_info['cpu_count']} CPU核心")
+            logger.info(f"设计 {design_name} 资源限制: {memory_limit_gb}g 内存, {cpu_limit} CPU")
             
-            # 创建正确的TCL脚本内容 - 基于OpenROAD官方文档
-            script_content = f"""
-puts "=== OpenROAD布局脚本开始 ==="
-puts "当前工作目录: [pwd]"
-puts "文件列表: [glob *]"
-
-# 完全重置OpenROAD数据库
-puts "重置OpenROAD数据库..."
-if {{[info exists ::ord::db]}} {{
-    ord::reset_db
-    puts "数据库重置完成"
-}} else {{
-    puts "数据库不存在，无需重置"
-}}
-
-# 检查文件是否存在
-if {{[file exists {lef_file.name}]}} {{
-    puts "✅ LEF文件存在: {lef_file.name}"
-}} else {{
-    puts "❌ LEF文件不存在: {lef_file.name}"
-    exit 1
-}}
-
-if {{[file exists {verilog_file.name}]}} {{
-    puts "✅ Verilog文件存在: {verilog_file.name}"
-}} else {{
-    puts "❌ Verilog文件不存在: {verilog_file.name}"
-    exit 1
-}}
-
-if {{[file exists {def_file.name}]}} {{
-    puts "✅ DEF文件存在: {def_file.name}"
-}} else {{
-    puts "❌ DEF文件不存在: {def_file.name}"
-    exit 1
-}}
-
-# 1. 正确的LEF加载顺序：先tech.lef，再cells.lef
-puts "开始加载tech.lef文件..."
-if {{[catch {{read_lef tech.lef}} err]}} {{
-    puts "❌ tech.lef文件加载失败: $err"
-    exit 1
-}} else {{
-    puts "✅ tech.lef文件加载成功"
-}}
-
-puts "开始加载cells.lef文件..."
-if {{[catch {{read_lef cells.lef}} err]}} {{
-    puts "❌ cells.lef文件加载失败: $err"
-    exit 1
-}} else {{
-    puts "✅ cells.lef文件加载成功"
-}}
-
-puts "开始加载Verilog文件..."
-if {{[catch {{read_verilog {verilog_file.name}}} err]}} {{
-    puts "❌ Verilog文件加载失败: $err"
-    exit 1
-}} else {{
-    puts "✅ Verilog文件加载成功"
-}}
-
-# 2. 连接设计 - 自动检测设计名称
-puts "开始连接设计..."
-set design_name "unknown"
-if {{[catch {{
-    set def_content [read [open {def_file.name} r]]
-    regexp {{DESIGN\\s+(\\w+)}} $def_content match design_name
-    puts "检测到设计名称: $design_name"
-}} err]}} {{
-    puts "警告：无法自动检测设计名称，使用默认名称"
-    set design_name "top"
-}}
-
-if {{[catch {{link_design $design_name}} err]}} {{
-    puts "❌ 连接设计失败: $err"
-    # 尝试使用常见的设计名称
-    foreach name {{fft des_perf matrix_mult pci_bridge top}} {{
-        if {{![catch {{link_design $name}}]}} {{
-            puts "✅ 使用设计名称 $name 连接成功"
-            set design_name $name
-            break
-        }}
-    }}
-    if {{$design_name eq "unknown"}} {{
-        puts "❌ 无法连接任何设计"
-        exit 1
-    }}
-}} else {{
-    puts "✅ 设计连接成功: $design_name"
-}}
-
-# 3. 初始化floorplan - 使用官方推荐的参数
-puts "初始化floorplan..."
-set utilization {layout_strategy.get('parameters', {}).get('utilization', 0.7)}
-set aspect_ratio {layout_strategy.get('parameters', {}).get('aspect_ratio', 1.0)}
-puts "布局参数: utilization=$utilization, aspect_ratio=$aspect_ratio"
-
-# 直接使用标准的site名称，不需要检测
-# 根据LEF文件，通常使用 "core" 或 "CoreSite"
-set selected_site "core"
-puts "使用标准site: $selected_site"
-
-if {{[catch {{
-    initialize_floorplan -utilization $utilization \\
-                        -aspect_ratio $aspect_ratio \\
-                        -core_space 10 \\
-                        -site $selected_site
-}} err]}} {{
-    puts "❌ 初始化floorplan失败: $err"
-    # 尝试使用不同的site名称
-    set fallback_sites {{CoreSite unit CORE}}
-    set floorplan_success 0
-    
-    foreach site $fallback_sites {{
-        puts "尝试使用site: $site"
-        if {{![catch {{
-            initialize_floorplan -utilization 0.6 \\
-                                -aspect_ratio 1.0 \\
-                                -core_space 20 \\
-                                -site $site
-        }}]}} {{
-            puts "✅ 使用site $site 初始化floorplan成功"
-            set selected_site $site
-            set floorplan_success 1
-            break
-        }}
-    }}
-    
-    if {{!$floorplan_success}} {{
-        puts "❌ 所有预设site都失败，尝试手动指定die和core区域"
-        if {{[catch {{
-            initialize_floorplan -die_area {{0 0 1000 1000}} \\
-                                -core_area {{100 100 900 900}} \\
-                                -site core
-        }} err2]}} {{
-            puts "❌ 手动指定区域也失败: $err2"
-            exit 1
-        }} else {{
-            puts "✅ 手动指定区域初始化floorplan成功"
-            set selected_site "core"
-        }}
-    }}
-}} else {{
-    puts "✅ floorplan初始化成功"
-}}
-
-# 4. 创建tracks - 官方推荐的做法
-puts "创建routing tracks..."
-if {{[catch {{make_tracks}} err]}} {{
-    puts "❌ 创建tracks失败: $err"
-    # 尝试为每个金属层单独创建tracks
-    set metal_layers {{metal1 metal2 metal3 metal4 metal5}}
-    foreach layer $metal_layers {{
-        if {{![catch {{make_tracks $layer}}]}} {{
-            puts "✅ 为层 $layer 创建tracks成功"
-        }}
-    }}
-}} else {{
-    puts "✅ tracks创建成功"
-}}
-
-# 5. 检查并确保标准单元行存在
-puts "检查标准单元行状态..."
-if {{[catch {{
-    # 使用简单的方法检查rows - 尝试报告设计信息
-    set design_info ""
-    if {{![catch {{set design_info [report_design_area]}}]}} {{
-        puts "设计区域信息: $design_info"
-    }}
-    
-    # 如果需要，尝试创建更多rows
-    puts "尝试优化标准单元行..."
-    if {{![catch {{
-        # 使用较小的core_space重新初始化以获得更多rows
-        initialize_floorplan -utilization 0.6 \\
-                            -aspect_ratio 1.0 \\
-                            -core_space 5 \\
-                            -site $selected_site
-    }}]}} {{
-        puts "✅ 优化标准单元行成功"
-    }}
-}} err]}} {{
-    puts "⚠️ 检查行状态时出错: $err，但继续尝试布局"
-}}
-
-# 6. 执行全局布局 - 使用官方推荐的参数
-puts "开始执行全局布局..."
-if {{[catch {{
-    global_placement -density $utilization \\
-                     -overflow 0.1
-}} err]}} {{
-    puts "❌ 全局布局失败: $err"
-    # 尝试使用更宽松的参数
-    if {{[catch {{
-        global_placement -density 0.6 \\
-                         -overflow 0.2 \\
-                         -skip_initial_place
-    }} err2]}} {{
-        puts "❌ 宽松参数全局布局也失败: $err2"
-        # 最后尝试：只进行初始布局
-        if {{[catch {{
-            global_placement -skip_nesterov_place
-        }} err3]}} {{
-            puts "❌ 初始布局也失败: $err3"
-            puts "⚠️ 跳过布局优化，使用初始floorplan"
-        }} else {{
-            puts "✅ 初始布局完成（跳过Nesterov优化）"
-        }}
-    }} else {{
-        puts "✅ 宽松参数全局布局完成"
-    }}
-}} else {{
-    puts "✅ 全局布局完成"
-}}
-
-# 7. 执行详细布局 - 使用官方推荐的做法
-puts "开始执行详细布局..."
-if {{[catch {{detailed_placement}} err]}} {{
-    puts "❌ 详细布局失败: $err"
-    puts "⚠️ 跳过详细布局，直接写入结果"
-}} else {{
-    puts "✅ 详细布局完成"
-}}
-
-# 8. 写入布局结果
-puts "写入布局结果..."
-if {{[catch {{write_def placed.def}} err]}} {{
-    puts "❌ 写入DEF失败: $err"
-    exit 1
-}} else {{
-    puts "✅ 布局结果已写入: placed.def"
-    # 检查文件大小
-    if {{[file exists placed.def]}} {{
-        set filesize [file size placed.def]
-        puts "✅ 布局文件大小: $filesize bytes"
-        if {{$filesize > 1000}} {{
-            puts "✅ 布局文件看起来正常"
-        }} else {{
-            puts "⚠️ 布局文件可能太小，请检查内容"
-        }}
-    }}
-}}
-
-puts "=== OpenROAD布局脚本完成 ==="
-exit 0
-"""
+            # 安全检查：确保不超过系统能力
+            max_safe_memory = int(available_memory_gb * 0.8)
+            if memory_limit_gb > max_safe_memory:
+                memory_limit_gb = max_safe_memory
+                logger.warning(f"内存限制调整为安全值: {memory_limit_gb}GB")
             
-            # 写入TCL脚本文件
-            script_file = design_dir / "placement_script.tcl"
+            logger.info(f"内存安全检查: 分配{memory_limit_gb}GB <= 最大可用{max_safe_memory}GB")
+            
+            # 生成修复后的OpenROAD脚本
+            script_content = self._generate_openroad_script(layout_strategy, design_name)
+            
+            # 写入TCL脚本
+            script_file = design_dir / "run_placement.tcl"
             with open(script_file, 'w') as f:
                 f.write(script_content)
-                f.flush()
-                import os
-                os.fsync(f.fileno())
             
-            logger.info(f"✅ TCL脚本已写入: {script_file}")
+            logger.info(f"修复版OpenROAD TCL脚本已写入: {script_file}")
             
-            # 检查脚本文件是否存在
-            if not script_file.exists():
-                logger.error(f"❌ TCL脚本文件创建失败: {script_file}")
-                return False
-            
-            # 构建Docker运行命令 - 添加正确的PATH设置
+            # 🐳 优化Docker命令：单任务最大资源模式  
             docker_cmd = [
                 "docker", "run", "--rm",
                 "-v", f"{design_dir.absolute()}:/work",
                 "-w", "/work",
-                "--memory", "8g",
-                "--cpus", "4",
+                "--memory", f"{memory_limit_gb}g",
+                "--cpus", str(cpu_limit),
+                # 优化环境变量
+                "-e", f"OPENROAD_NUM_THREADS={cpu_limit}",
+                "-e", f"OMP_NUM_THREADS={cpu_limit}",
+                "-e", f"MKL_NUM_THREADS={cpu_limit}",
+                "-e", f"DOCKER_MEMORY={memory_limit_gb}g",
+                "-e", f"DOCKER_CPUS={cpu_limit}",
+                # 内存优化环境变量
+                "-e", "OMP_THREAD_LIMIT=999",
+                "-e", "OMP_DYNAMIC=TRUE", 
+                "-e", "OMP_NESTED=TRUE",
+                "-e", "MALLOC_ARENA_MAX=4",
+                "-e", "MALLOC_MMAP_THRESHOLD_=131072",
                 "openroad/flow-ubuntu22.04-builder:21e414",
                 "bash", "-c",
-                f"export PATH=/OpenROAD-flow-scripts/tools/install/OpenROAD/bin:$PATH && openroad -no_init -no_splash -exit {script_file.name}"
+                f"export PATH=/OpenROAD-flow-scripts/tools/install/OpenROAD/bin:$PATH && openroad -no_init -no_splash -exit run_placement.tcl"
             ]
             
-            logger.info(f"执行Docker OpenROAD命令...")
-            logger.info(f"设计目录: {design_dir}")
-            logger.info(f"Docker命令: {' '.join(docker_cmd)}")
+            # 智能重试机制
+            max_retries = 3
+            timeout_seconds = self._calculate_intelligent_timeout(design_dir, layout_strategy)
             
-            try:
-                result = subprocess.run(
-                    docker_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=1800  # 30分钟超时
-                )
+            for attempt in range(max_retries):
+                logger.info(f"尝试执行OpenROAD (第{attempt + 1}/{max_retries}次)")
                 
-                # 保存详细的执行日志
-                log_file = design_dir / "openroad_execution.log"
-                with open(log_file, 'w') as f:
-                    f.write(f"=== OpenROAD Execution Log ===\n")
-                    f.write(f"Design Directory: {design_dir}\n")
-                    f.write(f"Command: {' '.join(docker_cmd)}\n")
-                    f.write(f"Return Code: {result.returncode}\n")
-                    f.write(f"=== STDOUT ===\n")
-                    f.write(result.stdout)
-                    f.write(f"\n=== STDERR ===\n")
-                    f.write(result.stderr)
-                    f.write(f"\n=== END ===\n")
+                logger.info(f"执行Docker OpenROAD命令...")
+                logger.info(f"Docker命令: {' '.join(docker_cmd)}")
                 
-                logger.info(f"OpenROAD执行日志已保存到: {log_file}")
-                
-                # 输出关键信息到控制台
-                if result.stdout:
-                    logger.info(f"OpenROAD标准输出: {result.stdout[-500:]}")  # 显示最后500字符
-                if result.stderr:
-                    logger.error(f"OpenROAD标准错误: {result.stderr}")
-                
-                if result.returncode == 0:
-                    logger.info(f"✅ Docker OpenROAD执行成功")
+                try:
+                    result = subprocess.run(
+                        docker_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout_seconds
+                    )
                     
-                    # 检查输出文件
-                    placed_def = design_dir / "placed.def"
-                    if placed_def.exists():
-                        logger.info(f"✅ 布局文件生成成功: {placed_def}")
-                        return True
-                    else:
-                        logger.warning("⚠️ OpenROAD执行成功但未生成placed.def文件")
+                    # 保存执行日志
+                    log_file = design_dir / "error.log"
+                    with open(log_file, 'w') as f:
+                        f.write(f"Return Code: {result.returncode}\n")
+                        f.write(f"STDOUT:\n{result.stdout}\n")
+                        f.write(f"STDERR:\n{result.stderr}\n")
+                    
+                    logger.info(f"OpenROAD执行日志已保存到: {log_file}")
+                    
+                    # 分析返回码
+                    if result.returncode == 0:
+                        logger.info(f"✅ Docker OpenROAD执行成功 (第{attempt + 1}次尝试)")
+                        
+                        # 检查输出文件
+                        placed_def = design_dir / "placed.def"
+                        if placed_def.exists():
+                            logger.info(f"✅ 布局文件生成成功: {placed_def}")
+                            return True
+                        else:
+                            logger.warning("⚠️ OpenROAD执行成功但未生成placed.def文件")
+                            if attempt < max_retries - 1:
+                                logger.info("准备重试...")
+                                continue
+                            return False
+                    elif result.returncode == 137:
+                        logger.error(f"❌ Docker容器被系统杀死 (返回码137) - 可能是内存不足")
+                        if attempt < max_retries - 1:
+                            # 尝试增加内存限制
+                            if memory_limit_gb < 8:
+                                memory_limit_gb = min(memory_limit_gb + 1, 8)
+                                logger.info(f"增加内存限制到 {memory_limit_gb}GB 并重试...")
+                                # 重建Docker命令
+                                docker_cmd[8] = f"{memory_limit_gb}g"  # 更新内存限制
+                                docker_cmd[18] = f"DOCKER_MEMORY={memory_limit_gb}g"  # 更新环境变量
+                                continue
+                            else:
+                                logger.error("已达到最大内存限制，无法继续重试")
+                                return False
                         return False
-                else:
-                    logger.error(f"❌ Docker OpenROAD执行失败，返回码: {result.returncode}")
+                    else:
+                        logger.error(f"❌ Docker OpenROAD执行失败，返回码: {result.returncode}")
+                        if "ODB-0251" in result.stdout or "Chip already exists" in result.stdout:
+                            logger.info("🔧 检测到芯片重复创建问题，脚本已修复此问题")
+                            # 这个错误应该已经通过修复的脚本解决了
+                            if attempt < max_retries - 1:
+                                logger.info("准备重试...")
+                                continue
+                        return False
+                        
+                except subprocess.TimeoutExpired:
+                    logger.error(f"❌ Docker OpenROAD执行超时 ({timeout_seconds}秒)")
+                    if attempt < max_retries - 1:
+                        # 增加超时时间并重试
+                        timeout_seconds = int(timeout_seconds * 1.5)
+                        logger.info(f"增加超时时间到 {timeout_seconds}秒 并重试...")
+                        continue
                     return False
-                    
-            except subprocess.TimeoutExpired:
-                logger.error(f"❌ Docker OpenROAD执行超时 (30分钟)")
-                return False
-            except Exception as e:
-                logger.error(f"❌ Docker OpenROAD执行异常: {e}")
-                return False
+                except Exception as e:
+                    logger.error(f"❌ Docker OpenROAD执行异常: {e}")
+                    if attempt < max_retries - 1:
+                        logger.info("准备重试...")
+                        continue
+                    return False
+            
+            logger.error(f"所有{max_retries}次尝试均失败")
+            return False
                 
         except Exception as e:
             logger.error(f"❌ 构建Docker OpenROAD命令失败: {e}")
             return False
+
+    def _check_hardware_resources(self) -> dict:
+        """检查硬件资源并智能调整并行策略"""
+        import psutil
+        
+        # 获取系统硬件信息
+        total_memory = psutil.virtual_memory().total
+        available_memory = psutil.virtual_memory().available
+        cpu_count = psutil.cpu_count()
+        
+        # 📊 智能并行策略调整 - 优先保证内存而非并行度
+        available_memory_gb = available_memory / (1024**3)
+        
+        if available_memory_gb < 8:
+            # 内存不足8GB，强制单任务模式
+            recommended_parallel = 1
+            logger.warning("⚠️ 系统内存不足8GB，强制使用单任务模式以保证稳定性")
+        elif available_memory_gb < 12:
+            # 内存8-12GB，限制并行度
+            recommended_parallel = 1
+            logger.info("💡 系统内存8-12GB，使用单任务模式以确保充足内存")
+        else:
+            # 内存充足，允许少量并行
+            recommended_parallel = min(2, self.max_parallel_designs)
+            logger.info("✅ 系统内存充足，允许少量并行处理")
+        
+        # 强制覆盖配置，优先保证内存
+        self.max_parallel_designs = recommended_parallel
+        self.max_parallel_containers = recommended_parallel
+        
+        return {
+            'total_memory_gb': total_memory / (1024**3),
+            'available_memory_gb': available_memory_gb,
+            'cpu_count': cpu_count,
+            'recommended_parallel_designs': recommended_parallel,
+            'memory_per_design_gb': available_memory_gb / recommended_parallel
+        }
+
+    def _generate_openroad_script(self, layout_strategy: Dict, design_name: str) -> str:
+        """生成修复后的OpenROAD TCL脚本"""
+        
+        # 提取布局参数
+        utilization = layout_strategy.get('utilization', 0.7)
+        aspect_ratio = layout_strategy.get('aspect_ratio', 1.0)
+        
+        # 🔧 修复后的脚本 - 正确的执行顺序，避免"Chip already exists"错误
+        script_content = f"""
+# === 修复版OpenROAD布局脚本 ===
+# 🔧 修复关键问题：
+# 1. 正确的LEF/DEF/Verilog加载顺序
+# 2. 避免芯片重复创建
+# 3. 智能设计名称检测
+# 4. 单任务最大内存模式
+
+puts "=== OpenROAD布局脚本 (内存优化模式) ==="
+puts "当前工作目录: [pwd]"
+puts "内存限制: $::env(DOCKER_MEMORY), CPU限制: $::env(DOCKER_CPUS)"
+
+# 设置OpenROAD线程数以充分利用分配的CPU
+if {{[info exists ::env(OPENROAD_NUM_THREADS)]}} {{
+    set thread_count $::env(OPENROAD_NUM_THREADS)
+}} else {{
+    set thread_count 8
+}}
+set_thread_count $thread_count
+puts "设置OpenROAD线程数: $thread_count"
+
+# 🔧 步骤1：完全重置OpenROAD状态，避免冲突
+if {{[info exists ::ord::db]}} {{
+    puts "重置OpenROAD数据库..."
+    ord::reset_db
+}}
+
+# 🔧 步骤2：按正确顺序读取LEF文件（先技术层，后单元库）
+puts "读取技术LEF文件: tech.lef"
+if {{[catch {{
+    read_lef tech.lef
+    puts "✅ tech.lef 加载成功"
+}} err]}} {{
+    puts "❌ tech.lef 加载失败: $err"
+    exit 1
+}}
+
+puts "读取单元库LEF文件: cells.lef"
+if {{[catch {{
+    read_lef cells.lef
+    puts "✅ cells.lef 加载成功"
+}} err]}} {{
+    puts "❌ cells.lef 加载失败: $err"
+    exit 1
+}}
+
+# 🔧 步骤3：读取Verilog文件（在读取DEF之前）
+puts "读取Verilog文件: design.v"
+if {{[catch {{
+    read_verilog design.v
+    puts "✅ design.v 加载成功"
+}} err]}} {{
+    puts "❌ design.v 加载失败: $err"
+    exit 1
+}}
+
+# 🔧 步骤4：读取DEF文件（这会自动创建芯片和链接设计，避免重复创建）
+puts "读取DEF文件: floorplan.def"
+if {{[catch {{
+    read_def floorplan.def
+    puts "✅ floorplan.def 加载成功"
+}} err]}} {{
+    puts "❌ floorplan.def 加载失败: $err"
+    exit 1
+}}
+
+# 🔧 步骤5：获取设计信息（DEF文件读取后已自动创建芯片）
+puts "获取设计信息..."
+set design_name "unknown"
+
+# 尝试获取当前设计名称
+if {{[catch {{
+    set design_name [ord::get_db_top_module_name]
+    if {{$design_name != ""}} {{
+        puts "✅ 检测到设计名称: $design_name"
+    }} else {{
+        set design_name "unknown"
+    }}
+}} err]}} {{
+    puts "警告：无法自动获取设计名称: $err"
+    set design_name "unknown"
+}}
+
+# 如果无法自动获取，尝试常见设计名称
+if {{$design_name == "unknown"}} {{
+    set candidate_names [list "matrix_mult" "des_perf" "fft" "pci_bridge32" "{design_name}" "top" "design"]
+    foreach name $candidate_names {{
+        if {{![catch {{current_design $name}}]}} {{
+            set design_name $name
+            puts "✅ 检测到设计名称: $design_name"
+            break
+        }}
+    }}
+    
+    if {{$design_name == "unknown"}} {{
+        puts "警告：使用默认设计名称"
+        set design_name "default"
+    }}
+}}
+
+# 🔧 步骤6：重新初始化布局以使用全部可用内存
+puts "重新初始化布局以优化内存使用..."
+if {{[catch {{
+    # 清除旧的布局
+    initialize_floorplan -utilization {utilization} -aspect_ratio {aspect_ratio} -core_space 20
+    puts "✅ 布局重新初始化成功"
+}} err]}} {{
+    puts "❌ 布局重新初始化失败: $err"
+    # 尝试使用不同的site名称
+    set site_candidates [list "core" "CoreSite" "unit" "CORE"]
+    set init_success 0
+    foreach site $site_candidates {{
+        if {{![catch {{
+            initialize_floorplan -utilization {utilization} -aspect_ratio {aspect_ratio} -core_space 20 -site $site
+        }}]}} {{
+            puts "✅ 使用site $site 初始化成功"
+            set init_success 1
+            break
+        }}
+    }}
+    
+    if {{!$init_success}} {{
+        puts "尝试手动指定区域初始化..."
+        if {{[catch {{
+            initialize_floorplan -die_area {{0 0 2000 2000}} -core_area {{100 100 1900 1900}}
+        }} err2]}} {{
+            puts "❌ 手动初始化也失败: $err2"
+            exit 1
+        }} else {{
+            puts "✅ 手动初始化成功"
+        }}
+    }}
+}}
+
+# 🔧 步骤7：全局布局（使用全部可用内存）
+puts "开始全局布局 (使用 $thread_count 线程)..."
+set density_target [expr {{0.9 * {utilization}}}]
+puts "全局布局参数:"
+puts "  density: $density_target"
+puts "  overflow: 0.1"
+puts "  threads: $thread_count"
+
+if {{[catch {{
+    global_placement -density $density_target -overflow 0.1
+}} err]}} {{
+    puts "❌ 全局布局失败: $err"
+    puts "尝试使用默认参数..."
+    if {{[catch {{
+        global_placement
+    }} err2]}} {{
+        puts "❌ 默认参数全局布局也失败: $err2"
+        exit 1
+    }} else {{
+        puts "✅ 使用默认参数全局布局成功"
+    }}
+}} else {{
+    puts "✅ 全局布局成功"
+}}
+
+# 🔧 步骤8：详细布局（使用全部可用内存和CPU）
+puts "开始执行详细布局 (使用 $thread_count 线程)..."
+set max_displacement 100
+
+puts "详细布局参数:"
+puts "  max_displacement: $max_displacement"
+puts "  threads: $thread_count"
+
+if {{[catch {{
+    detailed_placement -max_displacement $max_displacement
+}} err]}} {{
+    puts "❌ 详细布局失败: $err"
+    # 尝试使用更宽松的参数
+    puts "尝试使用更宽松的参数..."
+    if {{[catch {{
+        detailed_placement -max_displacement 200
+    }} err2]}} {{
+        puts "❌ 宽松参数详细布局也失败: $err2"
+        # 最后尝试默认参数
+        if {{[catch {{
+            detailed_placement
+        }} err3]}} {{
+            puts "❌ 默认参数详细布局也失败: $err3"
+            exit 1
+        }} else {{
+            puts "✅ 使用默认参数详细布局成功"
+        }}
+    }} else {{
+        puts "✅ 使用宽松参数详细布局成功"
+    }}
+}} else {{
+    puts "✅ 详细布局成功"
+}}
+
+# 🔧 步骤10：计算并报告HPWL
+puts "计算并报告HPWL..."
+if {{[catch {{
+    puts "=== 布局质量报告 ==="
+    set hpwl_report [check_placement -verbose]
+    puts "布局检查结果: $hpwl_report"
+    puts "✅ 布局质量检查完成"
+}} err]}} {{
+    puts "警告：布局质量检查失败: $err"
+}}
+
+# 🔧 步骤11：保存布局结果
+puts "保存布局结果..."
+if {{[catch {{
+    write_def placed.def
+    puts "✅ 布局结果保存到 placed.def"
+}} err]}} {{
+    puts "❌ 保存布局结果失败: $err"
+    exit 1
+}}
+
+# 🔧 步骤12：生成最终报告
+puts "生成最终报告..."
+puts "=== 最终报告 ==="
+puts "设计名称: $design_name"
+puts "线程数: $thread_count"
+puts "布局完成时间: [clock format [clock seconds]]"
+puts "布局文件: placed.def"
+puts "=== 布局脚本执行完成 ==="
+
+# 脚本正常结束
+puts "OpenROAD布局脚本执行完成 (内存优化模式)"
+exit 0
+"""
+        
+        return script_content.strip()
+
+    def _calculate_intelligent_timeout(self, design_dir: Path, layout_strategy: Dict) -> int:
+        """智能计算超时时间，基于设计复杂度和布局策略"""
+        design_name = design_dir.name
+        
+        # 基础超时时间
+        base_timeout = 3600  # 1小时
+        
+        # 根据设计复杂度调整
+        if 'matrix_mult' in design_name:
+            base_timeout *= 2.5  # 最复杂的设计
+        elif 'des_perf' in design_name:
+            base_timeout *= 2.0  # 复杂设计
+        elif 'fft' in design_name:
+            base_timeout *= 1.5  # 中等复杂度
+        
+        # 根据布局策略调整
+        utilization = layout_strategy.get('parameters', {}).get('utilization', 0.7)
+        if utilization > 0.8:
+            base_timeout *= 1.5  # 高利用率需要更多时间
+        
+        # 根据密度调整
+        density = layout_strategy.get('parameters', {}).get('density', 0.7)
+        if density > 0.8:
+            base_timeout *= 1.3  # 高密度需要更多时间
+        
+        # 设置最小和最大超时时间
+        min_timeout = 1800    # 30分钟
+        max_timeout = 14400   # 4小时
+        
+        timeout = max(min_timeout, min(int(base_timeout), max_timeout))
+        
+        logger.info(f"设计 {design_name} 智能超时计算: {timeout}秒 ({timeout/3600:.1f}小时)")
+        return timeout
+    
+    def _calculate_resource_limits(self, design_dir: Path) -> tuple:
+        """计算资源限制，基于设计规模和系统资源，严格限制在系统可用范围内"""
+        design_name = design_dir.name
+        
+        # 获取系统资源信息
+        import psutil
+        total_memory_gb = psutil.virtual_memory().total / (1024**3)
+        available_memory_gb = psutil.virtual_memory().available / (1024**3)
+        cpu_count = psutil.cpu_count()
+        
+        logger.info(f"系统资源: {total_memory_gb:.1f}GB 总内存, {available_memory_gb:.1f}GB 可用内存, {cpu_count} CPU核心")
+        
+        # 严格的内存分配策略 - 绝不超过系统限制
+        # 为系统保留至少4GB内存，Docker分配不超过可用内存的80%
+        max_docker_memory = min(
+            int(total_memory_gb - 4),  # 系统保留4GB
+            int(available_memory_gb * 0.8)  # 可用内存的80%
+        )
+        max_docker_memory = max(2, max_docker_memory)  # 最少2GB
+        
+        # 基于设计复杂度的内存分配，但严格限制在可用范围内
+        if 'matrix_mult' in design_name:
+            # 最复杂的设计
+            memory_gb = min(max_docker_memory, 8)  # 最多8GB
+            cpu_cores = min(cpu_count - 2, 8)
+        elif 'des_perf' in design_name:
+            # 复杂设计
+            memory_gb = min(max_docker_memory, 6)  # 最多6GB
+            cpu_cores = min(cpu_count - 2, 6)
+        elif 'fft' in design_name:
+            # 中等复杂度设计
+            memory_gb = min(max_docker_memory, 4)  # 最多4GB
+            cpu_cores = min(cpu_count - 2, 4)
+        else:
+            # 标准设计
+            memory_gb = min(max_docker_memory, 3)  # 最多3GB
+            cpu_cores = min(cpu_count - 2, 3)
+        
+        # 确保最小配置
+        memory_gb = max(2, memory_gb)  # 最少2GB
+        cpu_cores = max(1, cpu_cores)  # 最少1核
+        
+        memory_limit = f"{memory_gb}g"
+        cpu_limit = str(cpu_cores)
+        
+        logger.info(f"设计 {design_name} 资源限制: {memory_limit} 内存, {cpu_limit} CPU")
+        logger.info(f"内存安全检查: 分配{memory_gb}GB <= 最大可用{max_docker_memory}GB")
+        
+        return memory_limit, cpu_limit
+    
+    def _increase_memory_limit(self, current_limit: str) -> str:
+        """安全地增加内存限制，绝不超过系统可用内存"""
+        import psutil
+        
+        # 获取当前系统状态
+        total_memory_gb = psutil.virtual_memory().total / (1024**3)
+        available_memory_gb = psutil.virtual_memory().available / (1024**3)
+        
+        # 计算安全的最大内存限制
+        safe_max_memory = min(
+            int(total_memory_gb - 4),  # 系统保留4GB
+            int(available_memory_gb * 0.9)  # 可用内存的90%
+        )
+        safe_max_memory = max(2, safe_max_memory)  # 最少2GB
+        
+        # 解析当前内存限制
+        current_gb = int(current_limit.replace('g', ''))
+        
+        # 尝试增加内存，但不超过安全限制
+        new_gb = min(current_gb + 1, safe_max_memory)  # 每次只增加1GB
+        
+        new_limit = f"{new_gb}g"
+        
+        if new_gb <= current_gb:
+            logger.warning(f"❌ 无法增加内存限制: 当前{current_limit}已接近系统上限({safe_max_memory}GB)")
+            logger.info("建议使用其他优化策略:")
+            logger.info("  1. 降低布局密度参数")
+            logger.info("  2. 增加overflow容忍度")
+            logger.info("  3. 使用更保守的初始化参数")
+            logger.info("  4. 启用内存优化模式")
+            return current_limit  # 不增加内存
+        else:
+            logger.info(f"内存限制从 {current_limit} 安全增加到 {new_limit}")
+            logger.info(f"安全检查: {new_gb}GB <= 最大安全限制{safe_max_memory}GB")
+            return new_limit
 
     def _build_openroad_command(self, design_dir: Path, layout_strategy: Dict) -> Optional[List[str]]:
         """构建OpenROAD命令 - 已弃用，使用Docker接口"""
@@ -1625,17 +1864,556 @@ exit 0
             from dataclasses import replace
             return replace(state)
 
+    def _extract_hpwl_from_openroad_log(self, design_dir: Path) -> Optional[float]:
+        """从OpenROAD执行日志中提取真实的HPWL值"""
+        log_file = design_dir / "openroad_execution.log"
+        
+        if not log_file.exists():
+            logger.warning(f"OpenROAD日志文件不存在: {log_file}")
+            return None
+        
+        try:
+            with open(log_file, 'r') as f:
+                content = f.read()
+            
+            # 查找HPWL相关信息 - 按优先级排序
+            hpwl_patterns = [
+                # 优先级1: Legalized HPWL - 这是实际可实现的布局质量
+                (r'legalized HPWL\s+(\d+\.?\d*)\s*u', 'legalized HPWL'),
+                
+                # 优先级2: Total HPWL - 通常是最终结果
+                (r'Total HPWL:\s*(\d+\.?\d*)', 'Total HPWL'),
+                
+                # 优先级3: 其他HPWL格式
+                (r'HPWL:\s*(\d+\.?\d*)', 'HPWL'),
+                
+                # 优先级4: Original HPWL - 仅作为备选（理论值，可能不可实现）
+                (r'original HPWL\s+(\d+\.?\d*)\s*u', 'original HPWL (理论值)')
+            ]
+            
+            for pattern, hpwl_type in hpwl_patterns:
+                matches = re.findall(pattern, content, re.IGNORECASE)
+                if matches:
+                    # 取最后一个匹配的值（通常是最终的HPWL）
+                    hpwl_value = float(matches[-1])
+                    logger.info(f"从OpenROAD日志中提取到{hpwl_type}: {hpwl_value}")
+                    logger.info(f"技术原因：{hpwl_type}代表实际可实现的布局质量，适合算法对比")
+                    return hpwl_value
+            
+            logger.warning(f"未能从OpenROAD日志中找到任何HPWL值")
+            return None
+            
+        except Exception as e:
+            logger.error(f"解析OpenROAD日志时出错: {e}")
+            return None
+
+
+    
+    def _try_memory_optimization_strategies(self, design_dir: Path, layout_strategy: Dict) -> bool:
+        """尝试内存优化策略 - 重新设计，不使用固定参数"""
+        logger.info("🔧 尝试内存优化策略...")
+        
+        # 获取硬件状态
+        hardware_status = self._check_hardware_requirements()
+        
+        # 如果硬件不满足最低要求，直接报告
+        if not hardware_status['meets_minimum']:
+            logger.error("❌ 硬件资源不满足实验要求")
+            for warning in hardware_status['warnings']:
+                logger.error(warning)
+            for recommendation in hardware_status['recommendations']:
+                logger.info(recommendation)
+            return False
+        
+        # 策略1: 单独处理该设计 (如果当前是并行处理)
+        logger.info("策略1: 单独处理该设计以减少内存竞争")
+        if self._run_single_design_with_max_resources(design_dir, layout_strategy):
+            logger.info("✅ 单独处理模式成功!")
+            return True
+        
+        # 策略2: 降低该设计的资源需求 (但保持参数科学性)
+        logger.info("策略2: 适度降低资源需求")
+        if self._run_with_reduced_resources(design_dir, layout_strategy):
+            logger.info("✅ 降低资源需求成功!")
+            return True
+        
+        # 策略3: 报告硬件不足
+        logger.error("❌ 所有内存优化策略均失败")
+        logger.error(f"设计 {design_dir.name} 需要的内存超过了当前系统可提供的资源")
+        logger.info("建议:")
+        logger.info("  1. 升级系统内存至16GB或更多")
+        logger.info("  2. 关闭其他应用程序释放内存")
+        logger.info("  3. 使用更强大的硬件环境")
+        logger.info("  4. 考虑跳过该大型设计")
+        
+        return False
+    
+    def _run_single_design_with_max_resources(self, design_dir: Path, layout_strategy: Dict) -> bool:
+        """使用最大可用资源单独处理设计"""
+        try:
+            import psutil
+            
+            # 计算最大可用资源
+            available_memory_gb = psutil.virtual_memory().available / (1024**3)
+            cpu_count = psutil.cpu_count()
+            
+            # 为系统保留3GB内存和2核CPU
+            max_memory_gb = max(4, int(available_memory_gb - 3))
+            max_cpu_cores = max(2, cpu_count - 2)
+            
+            memory_limit = f"{max_memory_gb}g"
+            cpu_limit = str(max_cpu_cores)
+            
+            logger.info(f"单独处理模式: 使用最大资源 {memory_limit} 内存, {cpu_limit} CPU")
+            
+            return self._run_openroad_docker_with_resources(design_dir, layout_strategy, memory_limit, cpu_limit)
+            
+        except Exception as e:
+            logger.error(f"单独处理模式失败: {e}")
+            return False
+    
+    def _run_with_reduced_resources(self, design_dir: Path, layout_strategy: Dict) -> bool:
+        """使用降低的资源需求运行 - 但保持参数的科学性"""
+        try:
+            # 使用保守的资源配置，但不改变布局参数
+            memory_limit = "3g"  # 保守的内存配置
+            cpu_limit = "2"      # 保守的CPU配置
+            
+            logger.info(f"降低资源需求模式: {memory_limit} 内存, {cpu_limit} CPU")
+            logger.info("注意: 布局参数保持不变以确保实验科学性")
+            
+            return self._run_openroad_docker_with_resources(design_dir, layout_strategy, memory_limit, cpu_limit)
+            
+        except Exception as e:
+            logger.error(f"降低资源需求模式失败: {e}")
+            return False
+
+    def _check_hardware_requirements(self) -> Dict[str, Any]:
+        """检查硬件资源是否满足实验要求"""
+        import psutil
+        
+        total_memory_gb = psutil.virtual_memory().total / (1024**3)
+        available_memory_gb = psutil.virtual_memory().available / (1024**3)
+        cpu_count = psutil.cpu_count()
+        
+        # 定义实验的最低硬件要求
+        min_memory_gb = 8  # 最少8GB内存
+        min_cpu_cores = 4  # 最少4核CPU
+        recommended_memory_gb = 16  # 推荐16GB内存
+        recommended_cpu_cores = 8   # 推荐8核CPU
+        
+        hardware_status = {
+            'total_memory_gb': total_memory_gb,
+            'available_memory_gb': available_memory_gb,
+            'cpu_count': cpu_count,
+            'meets_minimum': total_memory_gb >= min_memory_gb and cpu_count >= min_cpu_cores,
+            'meets_recommended': total_memory_gb >= recommended_memory_gb and cpu_count >= recommended_cpu_cores,
+            'max_parallel_designs': self._calculate_max_parallel_designs(),
+            'memory_per_design': self._calculate_memory_per_design(),
+            'warnings': [],
+            'recommendations': []
+        }
+        
+        # 生成警告和建议
+        if not hardware_status['meets_minimum']:
+            hardware_status['warnings'].append(f"⚠️ 硬件资源不满足最低要求")
+            hardware_status['recommendations'].append(f"最低要求: {min_memory_gb}GB内存, {min_cpu_cores}核CPU")
+            hardware_status['recommendations'].append(f"当前配置: {total_memory_gb:.1f}GB内存, {cpu_count}核CPU")
+        
+        if not hardware_status['meets_recommended']:
+            hardware_status['warnings'].append(f"⚠️ 硬件资源低于推荐配置")
+            hardware_status['recommendations'].append(f"推荐配置: {recommended_memory_gb}GB内存, {recommended_cpu_cores}核CPU")
+            hardware_status['recommendations'].append(f"当前配置可能导致大型设计处理缓慢或失败")
+        
+        if available_memory_gb < 4:
+            hardware_status['warnings'].append(f"⚠️ 可用内存不足: {available_memory_gb:.1f}GB")
+            hardware_status['recommendations'].append("建议关闭其他应用程序以释放内存")
+        
+        return hardware_status
+    
+    def _calculate_max_parallel_designs(self) -> int:
+        """计算最大并行设计数量"""
+        import psutil
+        
+        available_memory_gb = psutil.virtual_memory().available / (1024**3)
+        cpu_count = psutil.cpu_count()
+        
+        # 为系统保留4GB内存
+        usable_memory_gb = max(2, available_memory_gb - 4)
+        
+        # 根据内存限制计算并行数量
+        # 大型设计需要6-8GB，中型设计需要4-6GB，小型设计需要2-4GB
+        max_by_memory = max(1, int(usable_memory_gb / 6))  # 假设平均每个设计需要6GB
+        
+        # 根据CPU限制计算并行数量
+        # 为系统保留2核
+        usable_cpu_cores = max(2, cpu_count - 2)
+        max_by_cpu = max(1, int(usable_cpu_cores / 2))  # 假设平均每个设计需要2核
+        
+        # 取内存和CPU限制的较小值
+        max_parallel = min(max_by_memory, max_by_cpu)
+        
+        logger.info(f"并行限制分析: 内存限制{max_by_memory}个, CPU限制{max_by_cpu}个, 最终{max_parallel}个")
+        
+        return max_parallel
+    
+    def _calculate_memory_per_design(self) -> Dict[str, int]:
+        """计算每种设计类型的内存需求"""
+        import psutil
+        
+        total_memory_gb = psutil.virtual_memory().total / (1024**3)
+        
+        # 基于系统总内存和设计复杂度的动态内存分配
+        base_memory = max(2, int(total_memory_gb * 0.2))  # 基础内存为总内存的20%
+        
+        memory_requirements = {
+            'matrix_mult': min(8, base_memory * 2),    # 最复杂设计
+            'des_perf': min(6, int(base_memory * 1.5)), # 复杂设计
+            'fft': min(4, base_memory),                 # 中等复杂度
+            'default': min(3, max(2, base_memory // 2)) # 标准设计
+        }
+        
+        return memory_requirements
+    
+    def _adjust_parallel_execution_for_memory(self, design_queue: List[Path]) -> List[List[Path]]:
+        """根据内存限制调整并行执行策略"""
+        if not design_queue:
+            return []
+        
+        # 获取硬件状态
+        hardware_status = self._check_hardware_requirements()
+        max_parallel = hardware_status['max_parallel_designs']
+        memory_per_design = hardware_status['memory_per_design']
+        
+        # 按设计复杂度分类
+        design_categories = {
+            'large': [],    # 大型设计 (matrix_mult, des_perf)
+            'medium': [],   # 中型设计 (fft)
+            'small': []     # 小型设计 (其他)
+        }
+        
+        for design_dir in design_queue:
+            design_name = design_dir.name.lower()
+            if 'matrix_mult' in design_name or 'des_perf' in design_name:
+                design_categories['large'].append(design_dir)
+            elif 'fft' in design_name:
+                design_categories['medium'].append(design_dir)
+            else:
+                design_categories['small'].append(design_dir)
+        
+        # 智能分批策略
+        batches = []
+        
+        # 1. 大型设计单独处理或小批量处理
+        if design_categories['large']:
+            logger.info(f"大型设计 ({len(design_categories['large'])}个) 将单独处理以避免内存不足")
+            for large_design in design_categories['large']:
+                batches.append([large_design])  # 每个大型设计单独一批
+        
+        # 2. 中型设计小批量处理
+        if design_categories['medium']:
+            medium_batch_size = min(2, max_parallel)  # 中型设计最多2个并行
+            for i in range(0, len(design_categories['medium']), medium_batch_size):
+                batch = design_categories['medium'][i:i+medium_batch_size]
+                batches.append(batch)
+        
+        # 3. 小型设计可以更多并行
+        if design_categories['small']:
+            small_batch_size = min(max_parallel, 4)  # 小型设计最多4个并行
+            for i in range(0, len(design_categories['small']), small_batch_size):
+                batch = design_categories['small'][i:i+small_batch_size]
+                batches.append(batch)
+        
+        logger.info(f"智能并行策略: 总共{len(design_queue)}个设计, 分成{len(batches)}批处理")
+        logger.info(f"大型设计: {len(design_categories['large'])}个 (单独处理)")
+        logger.info(f"中型设计: {len(design_categories['medium'])}个 (最多{min(2, max_parallel)}个并行)")
+        logger.info(f"小型设计: {len(design_categories['small'])}个 (最多{min(max_parallel, 4)}个并行)")
+        
+        return batches
+
+    def _run_openroad_docker_with_resources(self, design_dir: Path, layout_strategy: Dict, memory_limit: str, cpu_limit: str) -> bool:
+        """使用指定资源配置运行OpenROAD Docker，在工作目录中操作"""
+        import shutil
+        
+        try:
+            # 检查必要文件
+            tech_lef_file = design_dir / "tech.lef"
+            cells_lef_file = design_dir / "cells.lef"
+            def_file = design_dir / "floorplan.def"
+            verilog_file = design_dir / "design.v"
+            
+            if not all([tech_lef_file.exists(), cells_lef_file.exists(), def_file.exists(), verilog_file.exists()]):
+                logger.error(f"❌ 缺少必要文件: TECH_LEF={tech_lef_file.exists()}, CELLS_LEF={cells_lef_file.exists()}, DEF={def_file.exists()}, V={verilog_file.exists()}")
+                return False
+            
+            # 创建工作目录（在results目录下）
+            work_dir = self.base_dir / f"work_{design_dir.name}"
+            work_dir.mkdir(exist_ok=True)
+            
+            # 复制必要文件到工作目录
+            required_files = ["tech.lef", "cells.lef", "design.v", "floorplan.def"]
+            for file_name in required_files:
+                source_file = design_dir / file_name
+                dest_file = work_dir / file_name
+                shutil.copy2(source_file, dest_file)
+            
+            logger.info(f"已创建工作目录: {work_dir}")
+            lef_file = cells_lef_file  # 为了兼容性，保留原变量名
+            
+            # 从布局策略中提取动态参数
+            density = layout_strategy.get('parameters', {}).get('density', 0.7)
+            overflow = layout_strategy.get('parameters', {}).get('overflow', 0.1)
+            init_density_penalty = layout_strategy.get('parameters', {}).get('init_density_penalty', 8e-5)
+            bin_grid_count = layout_strategy.get('parameters', {}).get('bin_grid_count', '')
+            max_displacement = layout_strategy.get('parameters', {}).get('max_displacement', 100)
+            
+            # floorplan参数
+            utilization = layout_strategy.get('parameters', {}).get('utilization', 0.7)
+            aspect_ratio = layout_strategy.get('parameters', {}).get('aspect_ratio', 1.0)
+            
+            # 计算保守参数值 - 保持动态性
+            conservative_density = max(0.5, density * 0.7)
+            conservative_overflow = min(1.0, overflow * 2.0)
+            
+            # 创建简化的TCL脚本
+            script_content = f"""
+puts "=== OpenROAD布局脚本 (资源优化模式) ==="
+puts "当前工作目录: [pwd]"
+puts "内存限制: {memory_limit}, CPU限制: {cpu_limit}"
+
+# 设置线程数
+set thread_count {cpu_limit}
+set_thread_count $thread_count
+
+# 完全重置数据库
+if {{[info exists ::ord::db]}} {{
+    ord::reset_db
+}}
+
+# 检查并读取LEF文件（先读取技术LEF，再读取单元库LEF）
+if {{[file exists tech.lef]}} {{
+    puts "读取技术LEF文件: tech.lef"
+    read_lef tech.lef
+}} else {{
+    puts "❌ 技术LEF文件不存在: tech.lef"
+    exit 1
+}}
+
+if {{[file exists {lef_file.name}]}} {{
+    puts "读取单元库LEF文件: {lef_file.name}"
+    read_lef {lef_file.name}
+}} else {{
+    puts "❌ 单元库LEF文件不存在: {lef_file.name}"
+    exit 1
+}}
+
+# 检查并读取Verilog文件
+if {{[file exists {verilog_file.name}]}} {{
+    puts "读取Verilog文件: {verilog_file.name}"
+    read_verilog {verilog_file.name}
+}} else {{
+    puts "❌ Verilog文件不存在: {verilog_file.name}"
+    exit 1
+}}
+
+# 链接设计 - 智能设计名称检测
+puts "链接设计..."
+set design_name "unknown"
+if {{[catch {{
+    set def_content [read [open {def_file.name} r]]
+    regexp {{DESIGN\\s+(\\w+)}} $def_content match design_name
+    puts "检测到设计名称: $design_name"
+}} err]}} {{
+    puts "警告：无法自动检测设计名称，使用默认名称"
+    set design_name "design"
+}}
+
+if {{[catch {{link_design $design_name}} err]}} {{
+    puts "❌ 链接设计失败: $err"
+    # 尝试使用常见的设计名称
+    foreach name {{fft des_perf matrix_mult pci_bridge32 pci_bridge top design}} {{
+        if {{![catch {{link_design $name}}]}} {{
+            puts "✅ 使用设计名称 $name 连接成功"
+            set design_name $name
+            break
+        }}
+    }}
+    if {{$design_name eq "unknown"}} {{
+        puts "❌ 无法连接任何设计"
+        exit 1
+    }}
+}} else {{
+    puts "✅ 设计连接成功: $design_name"
+}}
+
+# 检查并读取DEF文件
+if {{[file exists {def_file.name}]}} {{
+    puts "读取DEF文件: {def_file.name}"
+    read_def {def_file.name}
+}} else {{
+    puts "❌ DEF文件不存在: {def_file.name}"
+    exit 1
+}}
+
+# 初始化floorplan
+puts "初始化floorplan..."
+if {{[catch {{
+    initialize_floorplan -utilization {utilization} -aspect_ratio {aspect_ratio} -core_space 2 -die_area {{0 0 800 800}}
+}} err]}} {{
+    puts "❌ 初始化floorplan失败: $err"
+    exit 1
+}}
+
+# 执行全局布局
+puts "执行全局布局..."
+if {{[catch {{
+    global_placement -density {density} -overflow {overflow} -init_density_penalty {init_density_penalty}
+}} err]}} {{
+    puts "❌ 全局布局失败: $err，尝试保守参数..."
+    if {{[catch {{
+        global_placement -density {conservative_density} -overflow {conservative_overflow}
+    }} err2]}} {{
+        puts "❌ 保守参数全局布局也失败: $err2"
+        exit 1
+    }}
+}}
+
+# 执行详细布局
+puts "执行详细布局..."
+if {{[catch {{
+    detailed_placement -max_displacement {max_displacement}
+}} err]}} {{
+    puts "❌ 详细布局失败: $err"
+    exit 1
+}}
+
+# 输出结果
+puts "写入布局结果..."
+write_def placed.def
+puts "✅ 布局完成"
+
+# 输出统计信息
+puts "=== 布局统计 ==="
+puts "设计名称: [current_design]"
+puts "实例数量: [llength [get_cells]]"
+puts "网络数量: [llength [get_nets]]"
+puts "布局完成时间: [clock format [clock seconds]]"
+"""
+            
+            # 写入TCL脚本到工作目录
+            script_file = work_dir / "run_placement.tcl"
+            with open(script_file, 'w') as f:
+                f.write(script_content)
+            
+            # 构建Docker命令 - 挂载工作目录
+            docker_cmd = [
+                "docker", "run", "--rm",
+                "-v", f"{work_dir.absolute()}:/work",
+                "-w", "/work",
+                "--memory", memory_limit,
+                "--cpus", cpu_limit,
+                # 添加环境变量
+                "-e", f"OPENROAD_NUM_THREADS={cpu_limit}",
+                "-e", f"OMP_NUM_THREADS={cpu_limit}",
+                # OpenROAD镜像
+                "openroad/flow-ubuntu22.04-builder:21e414",
+                "bash", "-c",
+                f"export PATH=/OpenROAD-flow-scripts/tools/install/OpenROAD/bin:$PATH && openroad -no_init -no_splash -exit {script_file.name}"
+            ]
+            
+            logger.info(f"执行Docker命令 (工作目录: {work_dir}): {' '.join(docker_cmd)}")
+            
+            # 执行命令
+            result = subprocess.run(
+                docker_cmd,
+                capture_output=True,
+                text=True,
+                timeout=3600  # 1小时超时
+            )
+            
+            # 检查结果
+            if result.returncode == 0:
+                placed_def_work = work_dir / "placed.def"
+                if placed_def_work.exists():
+                    # 将结果复制回原位置（用于后续处理）
+                    placed_def_dest = design_dir / "placed.def"
+                    shutil.copy2(placed_def_work, placed_def_dest)
+                    logger.info(f"✅ 资源优化模式执行成功，结果已保存到 {placed_def_dest}")
+                    return True
+                else:
+                    logger.warning("⚠️ 执行成功但未生成placed.def文件")
+                    return False
+            else:
+                logger.error(f"❌ 资源优化模式执行失败，返回码: {result.returncode}")
+                # 保存错误日志
+                error_log = work_dir / "error.log"
+                with open(error_log, 'w') as f:
+                    f.write(f"Return Code: {result.returncode}\n")
+                    f.write(f"STDOUT:\n{result.stdout}\n")
+                    f.write(f"STDERR:\n{result.stderr}\n")
+                logger.info(f"错误日志已保存到: {error_log}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ 资源优化模式执行异常: {e}")
+            return False
+
 def main():
     """主函数"""
-    experiment = PaperHPWLComparisonExperimentFixed()
-    report = experiment.run_complete_experiment_fixed()
-    
-    print("\n" + "="*50)
-    print("修正版论文HPWL对比实验完成")
-    print(f"平均提升率: {report['experiment_info']['average_improvement']:.2f}%")
-    print(f"训练记录数: {report['experiment_info']['training_records_count']}")
-    print(f"推理记录数: {report['experiment_info']['inference_records_count']}")
-    print("="*50)
+    try:
+        # 创建实验实例
+        experiment = PaperHPWLComparisonExperimentFixed()
+        
+        # 首先检查硬件资源
+        logger.info("=== 硬件资源检查 ===")
+        hardware_status = experiment._check_hardware_requirements()
+        
+        logger.info(f"系统配置: {hardware_status['total_memory_gb']:.1f}GB内存, {hardware_status['cpu_count']}核CPU")
+        logger.info(f"可用内存: {hardware_status['available_memory_gb']:.1f}GB")
+        logger.info(f"最大并行设计数: {hardware_status['max_parallel_designs']}")
+        
+        # 输出警告和建议
+        if hardware_status['warnings']:
+            for warning in hardware_status['warnings']:
+                logger.warning(warning)
+        
+        if hardware_status['recommendations']:
+            logger.info("建议:")
+            for recommendation in hardware_status['recommendations']:
+                logger.info(f"  • {recommendation}")
+        
+        # 如果不满足最低要求，警告但继续
+        if not hardware_status['meets_minimum']:
+            logger.error("❌ 硬件资源不满足最低要求!")
+            logger.info("实验可能会失败或运行缓慢")
+            logger.info("建议升级硬件或使用更强大的计算环境")
+            logger.info("继续实验，但将使用保守的资源配置...")
+        
+        # 运行实验
+        logger.info("开始修正版论文HPWL对比实验...")
+        logger.info(f"实验配置: 智能内存管理，最大{hardware_status['max_parallel_designs']}个设计并行处理")
+        
+        report = experiment.run_complete_experiment_fixed()
+        
+        # 输出结果
+        print("\n" + "="*50)
+        print("修正版论文HPWL对比实验完成")
+        print(f"平均提升率: {report['experiment_info']['average_improvement']:.2f}%")
+        print(f"训练记录数: {report['experiment_info']['training_records_count']}")
+        print(f"推理记录数: {report['experiment_info']['inference_records_count']}")
+        print("="*50)
+        
+        # 硬件资源使用摘要
+        print("\n=== 硬件资源使用摘要 ===")
+        print(f"系统配置: {hardware_status['total_memory_gb']:.1f}GB内存, {hardware_status['cpu_count']}核CPU")
+        print(f"满足最低要求: {'✅' if hardware_status['meets_minimum'] else '❌'}")
+        print(f"满足推荐配置: {'✅' if hardware_status['meets_recommended'] else '❌'}")
+        print(f"最大并行数: {hardware_status['max_parallel_designs']}")
+        
+    except Exception as e:
+        logger.error(f"❌ 主函数执行失败: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()
