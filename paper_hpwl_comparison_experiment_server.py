@@ -526,7 +526,7 @@ class PaperHPWLComparisonExperimentServer:
 puts "=== 服务器版OpenROAD布局脚本 ==="
 puts "当前工作目录: [pwd]"
 puts "设计名称: {design_name}"
-puts "OpenROAD版本: [version]"
+puts "OpenROAD服务器版脚本启动"
 
 # 设置多线程以利用服务器CPU资源
 set cpu_count [exec nproc]

@@ -51,8 +51,8 @@ def test_openroad_simple_script():
     # 创建一个简单的测试脚本
     test_script = """
 puts "Hello from OpenROAD!"
-puts "OpenROAD版本: [version]"
 puts "当前目录: [pwd]"
+puts "OpenROAD测试脚本运行中..."
 exit 0
 """
     
