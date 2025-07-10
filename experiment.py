@@ -1419,24 +1419,32 @@ puts "=== 布局完成 ==="
         aspect_ratio_values = []
         
         for case in retrieved_cases:
-            if isinstance(case, dict):
-                # 提取利用率信息
-                util_fields = ['utilization', 'util', 'density']
-                for field in util_fields:
-                    if field in case:
-                        val = case[field]
-                        if isinstance(val, (int, float)):
-                            utilization_values.append(val)
-                        break
-                
-                # 提取长宽比信息
-                ar_fields = ['aspect_ratio', 'ar', 'ratio']
-                for field in ar_fields:
-                    if field in case:
-                        val = case[field]
-                        if isinstance(val, (int, float)) and val > 0:
-                            aspect_ratio_values.append(val)
-                        break
+            # 处理DynamicRetrievalResult对象
+            if hasattr(case, 'knowledge') and isinstance(case.knowledge, dict):
+                case_data = case.knowledge
+            elif isinstance(case, dict):
+                case_data = case
+            else:
+                logger.warning(f"跳过未知格式的检索案例: {type(case)}")
+                continue
+            
+            # 提取利用率信息
+            util_fields = ['utilization', 'util', 'density']
+            for field in util_fields:
+                if field in case_data:
+                    val = case_data[field]
+                    if isinstance(val, (int, float)):
+                        utilization_values.append(val)
+                    break
+            
+            # 提取长宽比信息
+            ar_fields = ['aspect_ratio', 'ar', 'ratio']
+            for field in ar_fields:
+                if field in case_data:
+                    val = case_data[field]
+                    if isinstance(val, (int, float)) and val > 0:
+                        aspect_ratio_values.append(val)
+                    break
         
         # 基础计算
         if utilization_values:
@@ -1462,12 +1470,29 @@ puts "=== 布局完成 ==="
             
             cases_summary = []
             for i, case in enumerate(retrieved_cases[:5]):  # 只分析前5个最相关的案例
+                # 处理DynamicRetrievalResult对象
+                if hasattr(case, 'knowledge') and isinstance(case.knowledge, dict):
+                    case_data = case.knowledge
+                    source = getattr(case, 'source', f'case_{i}')
+                    relevance_score = getattr(case, 'relevance_score', 0.0)
+                    granularity_level = getattr(case, 'granularity_level', 'unknown')
+                elif isinstance(case, dict):
+                    case_data = case
+                    source = case.get('source', f'case_{i}')
+                    relevance_score = case.get('relevance_score', 0.0)
+                    granularity_level = case.get('granularity_level', 'unknown')
+                else:
+                    logger.warning(f"跳过未知格式的检索案例: {type(case)}")
+                    continue
+                
                 case_summary = {
-                    'id': case.get('id', f'case_{i}'),
-                    'design_type': case.get('design_type', 'unknown'),
-                    'source': case.get('source', 'unknown'),
-                    'features': case.get('features', {}),
-                    'performance_metrics': case.get('performance_metrics', {})
+                    'id': case_data.get('id', f'case_{i}'),
+                    'design_type': case_data.get('design_type', 'unknown'),
+                    'source': source,
+                    'relevance_score': relevance_score,
+                    'granularity_level': granularity_level,
+                    'features': case_data.get('features', {}),
+                    'performance_metrics': case_data.get('performance_metrics', {})
                 }
                 cases_summary.append(case_summary)
             
