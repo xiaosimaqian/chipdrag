@@ -58,7 +58,7 @@ class ModalRetriever(BaseRetriever):
         
         # 3. 结果融合
         return self._fuse_results(results)
-    
+        
     def _encode_query(self, query: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         """编码查询
         
@@ -103,7 +103,7 @@ class ModalRetriever(BaseRetriever):
             encodings['text'] = torch.zeros(1, 768)
         
         return encodings
-    
+        
     def _compute_similarities(self, query_encodings: Dict[str, torch.Tensor],
                             context: Optional[Dict] = None,
                             knowledge_base: Optional[Any] = None) -> List[Dict]:
@@ -172,36 +172,36 @@ class ModalRetriever(BaseRetriever):
                 for modality in query_encodings:
                     if modality in item_encodings:
                         try:
-                            similarities[modality] = torch.nn.functional.cosine_similarity(
-                                query_encodings[modality],
-                                item_encodings[modality]
-                            ).item()
+                        similarities[modality] = torch.nn.functional.cosine_similarity(
+                            query_encodings[modality],
+                            item_encodings[modality]
+                        ).item()
                         except Exception as e:
                             logger.debug(f"计算{modality}相似度失败: {e}")
                 
                 # 计算加权平均相似度
                 if similarities:
-                    weighted_sim = sum(
-                        similarities.get(modality, 0) * self.weights[modality]
-                        for modality in self.weights
-                    ) / sum(self.weights.values())
-                    
-                    results.append({
+                weighted_sim = sum(
+                    similarities.get(modality, 0) * self.weights[modality]
+                    for modality in self.weights
+                ) / sum(self.weights.values())
+                
+                results.append({
                         'item': item,
-                        'similarity': weighted_sim,
+                    'similarity': weighted_sim,
                         'modality_similarities': similarities
-                    })
+                })
                 
             except Exception as e:
                 logger.warning(f"处理知识库项目时出错: {e}")
                 continue
-        
+                
         # 按相似度排序
         results.sort(key=lambda x: x['similarity'], reverse=True)
         
         logger.info(f"相似度计算完成，返回 {len(results)} 个结果")
         return results
-    
+        
     def _fuse_results(self, results: List[Dict]) -> List[Dict]:
         """融合多模态结果
         
@@ -213,7 +213,7 @@ class ModalRetriever(BaseRetriever):
         """
         if not results:
             return []
-        
+            
         # 简单的结果融合（可以扩展为更复杂的融合策略）
         fused_results = []
         

@@ -1767,7 +1767,7 @@ RL智能体选择的动作：
         }
     
     def _execute_layout_and_calculate_reward(self, design_dir: Path, layout_strategy: Dict) -> float:
-        """执行布局并计算奖励"""
+        """执行布局并计算奖励 - 增强版"""
         try:
             # 从实际布局结果计算奖励
             def_file = design_dir / "placed.def"
@@ -1775,7 +1775,19 @@ RL智能体选择的动作：
                 def_file = design_dir / "floorplan.def"
             
             if def_file.exists():
-                hpwl = self._extract_hpwl_from_def(def_file)
+                # 优先级1: 使用OpenROAD内置HPWL计算（最准确）
+                hpwl = self._extract_hpwl_from_openroad_report(design_dir)
+                
+                # 优先级2: 使用ISPD2005风格的HPWL提取
+                if hpwl is None:
+                    logger.info("  OpenROAD内置HPWL计算失败，尝试ISPD2005风格")
+                    hpwl = self._extract_hpwl_from_def_ispd2005_style(def_file)
+                
+                # 优先级3: 回退到原来的方法
+                if hpwl is None:
+                    logger.info("  ISPD2005风格HPWL提取失败，尝试原始方法")
+                    hpwl = self._extract_hpwl_from_def(def_file)
+                
                 if hpwl is not None and hpwl > 0:
                     # 基于真实HPWL计算奖励 (越小越好)
                     # 使用对数缩放避免极端值
@@ -1800,29 +1812,46 @@ RL智能体选择的动作：
             return 0.1
     
     def _check_placement_success(self, def_file: Path) -> bool:
-        """检查布局是否成功（是否有组件被放置）"""
+        """检查布局是否成功（是否有组件被放置）- 增强版"""
         try:
             with open(def_file, 'r') as f:
                 content = f.read()
+            
+            logger.info(f"检查布局成功状态: {def_file}")
             
             # 检查是否有组件
             components_match = re.search(r'COMPONENTS\s+(\d+)', content)
             if components_match:
                 num_components = int(components_match.group(1))
+                logger.info(f"  总组件数: {num_components}")
+                
                 if num_components > 0:
                     # 检查是否有PLACED的组件
                     placed_count = content.count('PLACED')
-                    if placed_count > 0:
-                        logger.info(f"    检测到 {num_components} 个组件，其中 {placed_count} 个已放置")
+                    logger.info(f"  PLACED关键字出现次数: {placed_count}")
+                    
+                    # 检查是否有FIXED的组件
+                    fixed_count = content.count('FIXED')
+                    logger.info(f"  FIXED关键字出现次数: {fixed_count}")
+                    
+                    # 检查是否有COVER的组件
+                    cover_count = content.count('COVER')
+                    logger.info(f"  COVER关键字出现次数: {cover_count}")
+                    
+                    total_placed = placed_count + fixed_count + cover_count
+                    logger.info(f"  总放置组件数: {total_placed}")
+                    
+                    if total_placed > 0:
+                        logger.info(f"  布局成功：检测到 {total_placed} 个已放置组件")
                         return True
                     else:
-                        logger.warning(f"    有 {num_components} 个组件但未放置")
+                        logger.warning(f"  有 {num_components} 个组件但未放置")
                         return False
                 else:
-                    logger.warning(f"    COMPONENTS为0，布局失败")
+                    logger.warning(f"  COMPONENTS为0，布局失败")
                     return False
             else:
-                logger.warning(f"    未找到COMPONENTS声明")
+                logger.warning(f"  未找到COMPONENTS声明")
                 return False
                 
         except Exception as e:
@@ -1830,24 +1859,35 @@ RL智能体选择的动作：
             return False
     
     def _extract_hpwl_from_def(self, def_file: Path) -> Optional[float]:
-        """从DEF文件提取HPWL"""
+        """从DEF文件提取HPWL - 增强版"""
         if not def_file.exists():
+            logger.warning(f"DEF文件不存在: {def_file}")
             return None
         
         try:
             with open(def_file, 'r') as f:
                 content = f.read()
             
+            logger.info(f"开始解析DEF文件: {def_file}")
+            
             # 解析组件位置和网络连接
             components = {}
             nets = []
             
-            # 提取组件位置
+            # 提取组件位置 - 改进的解析逻辑
             in_components = False
+            component_count = 0
+            placed_count = 0
+            
             for line in content.split('\n'):
                 line = line.strip()
                 if line.startswith('COMPONENTS'):
                     in_components = True
+                    # 提取组件总数
+                    comp_match = re.search(r'COMPONENTS\s+(\d+)', line)
+                    if comp_match:
+                        component_count = int(comp_match.group(1))
+                        logger.info(f"  检测到 {component_count} 个组件")
                     continue
                 elif line.startswith('END COMPONENTS'):
                     in_components = False
@@ -1856,36 +1896,59 @@ RL智能体选择的动作：
                     parts = line.split()
                     if len(parts) >= 2:
                         comp_name = parts[1]
-                        if 'PLACED' in parts:
-                            placed_idx = parts.index('PLACED')
-                            if placed_idx + 4 < len(parts):
+                        # 检查多种PLACED格式
+                        placed_formats = [
+                            'PLACED', 'PLACED(', 'PLACED (', 'PLACED('
+                        ]
+                        
+                        for i, part in enumerate(parts):
+                            if any(placed in part for placed in placed_formats):
                                 try:
-                                    x_str = parts[placed_idx + 2].replace('(', '').replace(')', '')
-                                    y_str = parts[placed_idx + 3].replace('(', '').replace(')', '')
-                                    x = float(x_str)
-                                    y = float(y_str)
-                                    components[comp_name] = (x, y)
+                                    # 查找坐标
+                                    coord_start = i + 1
+                                    if coord_start + 3 < len(parts):
+                                        x_str = parts[coord_start].replace('(', '').replace(')', '')
+                                        y_str = parts[coord_start + 1].replace('(', '').replace(')', '')
+                                        x = float(x_str)
+                                        y = float(y_str)
+                                        components[comp_name] = (x, y)
+                                        placed_count += 1
+                                        break
                                 except (ValueError, IndexError):
                                     continue
             
-            # 如果没有放置的组件，返回估计值
+            logger.info(f"  成功解析 {placed_count} 个已放置组件")
+            
+            # 如果没有放置的组件，尝试从DIEAREA估算
             if not components:
+                logger.warning("  没有找到已放置的组件")
                 diearea_match = re.search(r'DIEAREA\s*\(\s*(\d+)\s+(\d+)\s*\)\s*\(\s*(\d+)\s+(\d+)\s*\)', content)
                 if diearea_match:
                     x1, y1, x2, y2 = map(int, diearea_match.groups())
                     area = (x2 - x1) * (y2 - y1)
-                    return area * 0.1
-                return None
+                    estimated_hpwl = area * 0.1
+                    logger.info(f"  基于DIEAREA估算HPWL: {estimated_hpwl:.0f}")
+                    return estimated_hpwl
+                else:
+                    logger.warning("  未找到DIEAREA信息")
+                    return None
             
-            # 提取网络连接并计算HPWL
+            # 提取网络连接并计算HPWL - 改进的解析逻辑
             total_hpwl = 0.0
             in_nets = False
             current_net = None
+            net_count = 0
+            valid_net_count = 0
             
             for line in content.split('\n'):
                 line = line.strip()
                 if line.startswith('NETS'):
                     in_nets = True
+                    # 提取网络总数
+                    net_match = re.search(r'NETS\s+(\d+)', line)
+                    if net_match:
+                        net_count = int(net_match.group(1))
+                        logger.info(f"  检测到 {net_count} 个网络")
                     continue
                 elif line.startswith('END NETS'):
                     in_nets = False
@@ -1897,12 +1960,16 @@ RL智能体选择的动作：
                         current_net = {'name': net_name, 'pins': []}
                         nets.append(current_net)
                 elif in_nets and current_net and '(' in line:
+                    # 改进的引脚解析
                     parts = line.split()
                     for i, part in enumerate(parts):
                         if part.startswith('(') and i + 1 < len(parts):
-                            comp_name = part.replace('(', '')
+                            # 提取组件名称
+                            comp_name = part.replace('(', '').strip()
                             if comp_name in components:
                                 current_net['pins'].append(comp_name)
+            
+            logger.info(f"  解析了 {len(nets)} 个网络")
             
             # 计算HPWL
             for net in nets:
@@ -1920,8 +1987,16 @@ RL智能体选择的动作：
                         
                         hpwl = (max_x - min_x) + (max_y - min_y)
                         total_hpwl += hpwl
+                        valid_net_count += 1
             
-            return total_hpwl if total_hpwl > 0 else None
+            logger.info(f"  计算了 {valid_net_count} 个有效网络的HPWL")
+            
+            if total_hpwl > 0:
+                logger.info(f"  总HPWL: {total_hpwl:.0f}")
+                return total_hpwl
+            else:
+                logger.warning("  计算出的HPWL为0，可能没有有效的网络连接")
+                return None
                 
         except Exception as e:
             logger.error(f"从DEF文件提取HPWL失败: {e}")
@@ -3131,6 +3206,261 @@ RL智能体选择的动作：
         logger.info(f"📈 相似度分析结果:")
         logger.info(f"   - 高相似度案例对 (>0.7): {high_sim_count}")
         logger.info(f"   - 低相似度案例 (<0.3): {low_sim_count}")
+    
+    def _extract_hpwl_from_def_ispd2005_style(self, def_file: Path) -> Optional[float]:
+        """基于ISPD2005官方HPWL脚本逻辑的HPWL提取函数"""
+        if not def_file.exists():
+            logger.warning(f"DEF文件不存在: {def_file}")
+            return None
+        
+        try:
+            with open(def_file, 'r') as f:
+                content = f.read()
+            
+            logger.info(f"开始ISPD2005风格HPWL提取: {def_file}")
+            
+            # 解析组件信息：名称、尺寸、位置
+            components = {}  # {name: {'dx': width, 'dy': height, 'lx': x, 'ly': y}}
+            nets = []       # [{name: net_name, pins: [comp_name]}]
+            
+            # 第一阶段：解析组件信息
+            in_components = False
+            component_count = 0
+            placed_count = 0
+            
+            for line in content.split('\n'):
+                line = line.strip()
+                if line.startswith('COMPONENTS'):
+                    in_components = True
+                    comp_match = re.search(r'COMPONENTS\s+(\d+)', line)
+                    if comp_match:
+                        component_count = int(comp_match.group(1))
+                        logger.info(f"  检测到 {component_count} 个组件")
+                    continue
+                elif line.startswith('END COMPONENTS'):
+                    in_components = False
+                    continue
+                elif in_components and line.startswith('-'):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        comp_name = parts[1]
+                        
+                        # 查找组件尺寸（通常在LEF文件中定义，这里使用默认值）
+                        dx, dy = 1.0, 1.0  # 默认尺寸
+                        
+                        # 查找PLACED位置
+                        for i, part in enumerate(parts):
+                            if any(placed in part for placed in ['PLACED', 'FIXED', 'COVER']):
+                                try:
+                                    # 查找坐标
+                                    coord_start = i + 1
+                                    if coord_start + 3 < len(parts):
+                                        x_str = parts[coord_start].replace('(', '').replace(')', '')
+                                        y_str = parts[coord_start + 1].replace('(', '').replace(')', '')
+                                        lx = float(x_str)
+                                        ly = float(y_str)
+                                        
+                                        components[comp_name] = {
+                                            'dx': dx, 'dy': dy,
+                                            'lx': lx, 'ly': ly
+                                        }
+                                        placed_count += 1
+                                        break
+                                except (ValueError, IndexError):
+                                    continue
+            
+            logger.info(f"  成功解析 {placed_count} 个已放置组件")
+            
+            if not components:
+                logger.warning("  没有找到已放置的组件")
+                return None
+            
+            # 第二阶段：解析网络连接
+            in_nets = False
+            current_net = None
+            net_count = 0
+            
+            for line in content.split('\n'):
+                line = line.strip()
+                if line.startswith('NETS'):
+                    in_nets = True
+                    net_match = re.search(r'NETS\s+(\d+)', line)
+                    if net_match:
+                        net_count = int(net_match.group(1))
+                        logger.info(f"  检测到 {net_count} 个网络")
+                    continue
+                elif line.startswith('END NETS'):
+                    in_nets = False
+                    continue
+                elif in_nets and line.startswith('-'):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        net_name = parts[1]
+                        current_net = {'name': net_name, 'pins': []}
+                        nets.append(current_net)
+                elif in_nets and current_net and '(' in line:
+                    # 解析引脚连接
+                    parts = line.split()
+                    for i, part in enumerate(parts):
+                        if part.startswith('(') and i + 1 < len(parts):
+                            comp_name = part.replace('(', '').strip()
+                            if comp_name in components:
+                                current_net['pins'].append(comp_name)
+            
+            logger.info(f"  解析了 {len(nets)} 个网络")
+            
+            # 第三阶段：计算HPWL（基于ISPD2005逻辑）
+            total_hpwl = 0.0
+            valid_net_count = 0
+            
+            for net in nets:
+                if len(net['pins']) >= 2:
+                    # 计算网络的边界框
+                    net_lx = float('inf')   # 最小x坐标
+                    net_ly = float('inf')   # 最小y坐标
+                    net_hx = float('-inf')  # 最大x坐标
+                    net_hy = float('-inf')  # 最大y坐标
+                    
+                    for pin in net['pins']:
+                        if pin in components:
+                            comp = components[pin]
+                            # 计算组件中心点
+                            cx = comp['lx'] + (comp['dx'] / 2)
+                            cy = comp['ly'] + (comp['dy'] / 2)
+                            
+                            # 更新边界框
+                            net_lx = min(net_lx, cx)
+                            net_ly = min(net_ly, cy)
+                            net_hx = max(net_hx, cx)
+                            net_hy = max(net_hy, cy)
+                    
+                    # 计算HPWL
+                    if net_lx != float('inf') and net_hx != float('-inf'):
+                        hpwl = (net_hx - net_lx) + (net_hy - net_ly)
+                        if hpwl >= 0:  # 验证HPWL合理性
+                            total_hpwl += hpwl
+                            valid_net_count += 1
+                        else:
+                            logger.warning(f"  网络 {net['name']} HPWL为负值: {hpwl}")
+            
+            logger.info(f"  计算了 {valid_net_count} 个有效网络的HPWL")
+            
+            if total_hpwl > 0:
+                logger.info(f"  总HPWL: {total_hpwl:.0f}")
+                return total_hpwl
+            else:
+                logger.warning("  计算出的HPWL为0，可能没有有效的网络连接")
+                return None
+                
+        except Exception as e:
+            logger.error(f"ISPD2005风格HPWL提取失败: {e}")
+            return None
+    
+    def _extract_hpwl_from_openroad_report(self, design_dir: Path) -> Optional[float]:
+        """使用OpenROAD内置命令提取HPWL - 最准确的方法"""
+        try:
+            # 检查是否有OpenROAD报告文件
+            report_files = list(design_dir.glob("*wirelength*.rpt"))
+            if not report_files:
+                # 尝试生成HPWL报告
+                hpwl = self._generate_openroad_hpwl_report(design_dir)
+                return hpwl
+            
+            # 读取最新的HPWL报告
+            latest_report = max(report_files, key=lambda f: f.stat().st_mtime)
+            logger.info(f"读取HPWL报告: {latest_report}")
+            
+            with open(latest_report, 'r') as f:
+                content = f.read()
+            
+            # 解析HPWL值
+            import re
+            
+            # 查找总HPWL值
+            hpwl_patterns = [
+                r'Total wire length:\s*([\d.]+)\s*um',
+                r'Total HPWL:\s*([\d.]+)',
+                r'Wire length:\s*([\d.]+)',
+                r'HPWL:\s*([\d.]+)'
+            ]
+            
+            for pattern in hpwl_patterns:
+                match = re.search(pattern, content)
+                if match:
+                    hpwl_value = float(match.group(1))
+                    logger.info(f"从OpenROAD报告提取HPWL: {hpwl_value:.0f}")
+                    return hpwl_value
+            
+            logger.warning("未在OpenROAD报告中找到HPWL值")
+            return None
+            
+        except Exception as e:
+            logger.error(f"从OpenROAD报告提取HPWL失败: {e}")
+            return None
+    
+    def _generate_openroad_hpwl_report(self, design_dir: Path) -> Optional[float]:
+        """生成OpenROAD HPWL报告"""
+        try:
+            # 查找DEF文件
+            def_files = list(design_dir.glob("*.def"))
+            if not def_files:
+                logger.warning("未找到DEF文件")
+                return None
+            
+            def_file = def_files[0]  # 使用第一个DEF文件
+            
+            # 创建简单的TCL脚本来生成HPWL报告
+            tcl_script = f"""
+# OpenROAD HPWL计算脚本
+read_def {def_file.name}
+
+# 生成HPWL报告
+report_wire_length -outfile hpwl_report.rpt
+
+# 获取总HPWL值
+set total_hpwl [get_total_wirelength]
+puts "Total HPWL: $total_hpwl"
+
+exit
+"""
+            
+            tcl_file = design_dir / "hpwl_calc.tcl"
+            with open(tcl_file, 'w') as f:
+                f.write(tcl_script)
+            
+            # 执行OpenROAD命令
+            if self.mode == "local":
+                # 使用Docker
+                result = subprocess.run([
+                    'docker', 'run', '--rm',
+                    '-v', f'{design_dir.absolute()}:/workspace',
+                    '-w', '/workspace',
+                    'openroad/flow-ubuntu22.04-builder:21e414',
+                    'openroad', '-exit', 'hpwl_calc.tcl'
+                ], capture_output=True, text=True, timeout=60)
+            else:
+                # 使用系统OpenROAD
+                result = subprocess.run([
+                    'openroad', '-exit', str(tcl_file)
+                ], capture_output=True, text=True, timeout=60, cwd=design_dir)
+            
+            if result.returncode == 0:
+                # 从输出中提取HPWL值
+                import re
+                for line in result.stdout.split('\n'):
+                    if 'Total HPWL:' in line:
+                        hpwl_match = re.search(r'Total HPWL:\s*([\d.]+)', line)
+                        if hpwl_match:
+                            hpwl_value = float(hpwl_match.group(1))
+                            logger.info(f"OpenROAD计算HPWL: {hpwl_value:.0f}")
+                            return hpwl_value
+            
+            logger.warning("OpenROAD HPWL计算失败")
+            return None
+            
+        except Exception as e:
+            logger.error(f"生成OpenROAD HPWL报告失败: {e}")
+            return None
 
 
 class PerformanceMonitor:

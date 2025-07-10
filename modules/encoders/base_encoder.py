@@ -34,26 +34,26 @@ class BaseEncoder(ABC):
         if device is not None:
             self.device = device
         else:
-            # 读取系统配置
+        # 读取系统配置
             try:
-                system_config_path = get_system_config_path()
-                with open(system_config_path, 'r') as f:
-                    system_config = json.load(f)
-                    
-                device_config = system_config.get('device', {})
-                device_type = device_config.get('type', 'cuda')
-                device_index = device_config.get('index', 0)
-                fallback_to_cpu = device_config.get('fallback_to_cpu', True)
-                
-                if device_type == 'cuda' and torch.cuda.is_available():
-                    self.device = torch.device(f'cuda:{device_index}')
-                    logger.info(f"使用GPU设备: {self.device}")
-                else:
-                    if fallback_to_cpu:
-                        self.device = torch.device('cpu')
-                        logger.info(f"GPU不可用，使用CPU设备: {self.device}")
-                    else:
-                        raise RuntimeError("GPU不可用且不允许回退到CPU")
+        system_config_path = get_system_config_path()
+        with open(system_config_path, 'r') as f:
+            system_config = json.load(f)
+            
+        device_config = system_config.get('device', {})
+        device_type = device_config.get('type', 'cuda')
+        device_index = device_config.get('index', 0)
+        fallback_to_cpu = device_config.get('fallback_to_cpu', True)
+        
+        if device_type == 'cuda' and torch.cuda.is_available():
+            self.device = torch.device(f'cuda:{device_index}')
+            logger.info(f"使用GPU设备: {self.device}")
+        else:
+            if fallback_to_cpu:
+                self.device = torch.device('cpu')
+                logger.info(f"GPU不可用，使用CPU设备: {self.device}")
+            else:
+                raise RuntimeError("GPU不可用且不允许回退到CPU")
             except Exception as e:
                 logger.warning(f"读取系统配置失败: {e}，使用默认设备")
                 self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
