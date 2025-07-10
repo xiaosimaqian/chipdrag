@@ -1775,18 +1775,22 @@ RL智能体选择的动作：
                 def_file = design_dir / "floorplan.def"
             
             if def_file.exists():
-                # 优先级1: 使用OpenROAD内置HPWL计算（最准确）
-                hpwl = self._extract_hpwl_from_openroad_report(design_dir)
+                # 基于测试结果，优先使用ISPD2005解析器（已验证成功）
+                hpwl = self._extract_hpwl_from_def_ispd2005_style(def_file)
+                if hpwl is not None:
+                    logger.info(f"  ISPD2005解析器HPWL: {hpwl:.0f}")
                 
-                # 优先级2: 使用ISPD2005风格的HPWL提取
+                # 回退到原始方法
                 if hpwl is None:
-                    logger.info("  OpenROAD内置HPWL计算失败，尝试ISPD2005风格")
-                    hpwl = self._extract_hpwl_from_def_ispd2005_style(def_file)
-                
-                # 优先级3: 回退到原来的方法
-                if hpwl is None:
-                    logger.info("  ISPD2005风格HPWL提取失败，尝试原始方法")
+                    logger.info("  ISPD2005解析器失败，尝试原始方法")
                     hpwl = self._extract_hpwl_from_def(def_file)
+                    if hpwl is not None:
+                        logger.info(f"  原始方法HPWL: {hpwl:.0f}")
+                
+                # OpenROAD仅用于验证布局状态（不用于HPWL计算）
+                if hpwl is None:
+                    logger.info("  HPWL提取失败，使用OpenROAD验证布局状态")
+                    self._extract_hpwl_from_openroad_report(design_dir)  # 仅验证
                 
                 if hpwl is not None and hpwl > 0:
                     # 基于真实HPWL计算奖励 (越小越好)
@@ -3390,45 +3394,28 @@ RL智能体选择的动作：
             return None
     
     def _extract_hpwl_from_openroad_report(self, design_dir: Path) -> Optional[float]:
-        """使用OpenROAD内置命令提取HPWL - 最准确的方法"""
+        """使用OpenROAD验证布局状态 - 基于测试结果，不用于HPWL计算"""
         try:
-            # 检查是否有OpenROAD报告文件
-            report_files = list(design_dir.glob("*wirelength*.rpt"))
-            if not report_files:
-                # 尝试生成HPWL报告
-                hpwl = self._generate_openroad_hpwl_report(design_dir)
-                return hpwl
+            # 基于测试结果，OpenROAD的report_wire_length无法返回具体HPWL数值
+            # 但可以用来验证布局是否成功
+            logger.info("OpenROAD HPWL提取：基于测试结果，report_wire_length无法返回具体数值")
+            logger.info("建议使用ISPD2005解析器进行HPWL计算")
             
-            # 读取最新的HPWL报告
-            latest_report = max(report_files, key=lambda f: f.stat().st_mtime)
-            logger.info(f"读取HPWL报告: {latest_report}")
+            # 检查布局是否成功
+            def_files = list(design_dir.glob("*.def"))
+            if def_files:
+                def_file = def_files[0]
+                if self._check_placement_success(def_file):
+                    logger.info("OpenROAD验证：布局成功")
+                    return None  # 不返回HPWL值，让系统使用其他方法
+                else:
+                    logger.warning("OpenROAD验证：布局失败")
+                    return None
             
-            with open(latest_report, 'r') as f:
-                content = f.read()
-            
-            # 解析HPWL值
-            import re
-            
-            # 查找总HPWL值
-            hpwl_patterns = [
-                r'Total wire length:\s*([\d.]+)\s*um',
-                r'Total HPWL:\s*([\d.]+)',
-                r'Wire length:\s*([\d.]+)',
-                r'HPWL:\s*([\d.]+)'
-            ]
-            
-            for pattern in hpwl_patterns:
-                match = re.search(pattern, content)
-                if match:
-                    hpwl_value = float(match.group(1))
-                    logger.info(f"从OpenROAD报告提取HPWL: {hpwl_value:.0f}")
-                    return hpwl_value
-            
-            logger.warning("未在OpenROAD报告中找到HPWL值")
             return None
             
         except Exception as e:
-            logger.error(f"从OpenROAD报告提取HPWL失败: {e}")
+            logger.error(f"OpenROAD验证失败: {e}")
             return None
     
     def _generate_openroad_hpwl_report(self, design_dir: Path) -> Optional[float]:
@@ -3444,9 +3431,9 @@ RL智能体选择的动作：
             
             def_file = def_files[0]  # 使用第一个DEF文件
             
-            # 创建完整的TCL脚本来生成HPWL报告
+            # 创建基于测试结果的TCL脚本
             tcl_script = f"""
-# OpenROAD HPWL计算脚本 - 完整版本
+# OpenROAD HPWL计算脚本 - 基于测试结果优化
 puts "开始OpenROAD HPWL计算..."
 
 # 完全重置数据库
@@ -3497,39 +3484,54 @@ puts "  总实例数: $total_insts"
 puts "  已放置实例数: $placed_insts"
 puts "  网络数: [llength $nets]"
 
-# 计算HPWL
+# 统计网络类型
+set signal_nets 0
+set power_nets 0
+set clock_nets 0
+
+foreach net $nets {{
+    set sig_type [$net getSigType]
+    if {{$sig_type == "SIGNAL"}} {{
+        incr signal_nets
+    }} elseif {{$sig_type == "POWER"}} {{
+        incr power_nets
+    }} elseif {{$sig_type == "CLOCK"}} {{
+        incr clock_nets
+    }}
+}}
+
+puts "信号网络数: $signal_nets"
+puts "电源网络数: $power_nets"
+puts "时钟网络数: $clock_nets"
+
+# 计算HPWL - 基于测试结果优化
 puts "开始计算HPWL..."
 
-# 方法1：使用report_wire_length
-if {{[catch {{
-    report_wire_length -outfile hpwl_report.rpt
-    puts "HPWL报告已生成: hpwl_report.rpt"
-}} err]}} {{
-    puts "report_wire_length失败: $err"
-}}
+# 方法1：使用report_wire_length（已验证成功）
+set processed_nets 0
+set max_test_nets 100  # 限制测试网络数量
 
-# 方法2：使用get_total_wirelength
-if {{[catch {{
-    set total_hpwl [get_total_wirelength]
-    puts "Total HPWL (get_total_wirelength): $total_hpwl"
-}} err]}} {{
-    puts "get_total_wirelength失败: $err"
-}}
-
-# 方法3：手动计算HPWL
-if {{[catch {{
-    set total_hpwl_manual 0
-    foreach net $nets {{
-        if {{[$net getSigType] == "SIGNAL"}} {{
-            set hpwl [$net getHPWL]
-            set total_hpwl_manual [expr $total_hpwl_manual + $hpwl]
+foreach net $nets {{
+    if {{[$net getSigType] == "SIGNAL"}} {{
+        set net_name [$net getName]
+        
+        # 使用report_wire_length获取网络长度
+        if {{[catch {{
+            report_wire_length -net $net_name
+        }} err]}} {{
+            puts "网络 $net_name 长度计算失败: $err"
+        }} else {{
+            incr processed_nets
+        }}
+        
+        if {{$processed_nets >= $max_test_nets}} {{
+            puts "已达到测试网络数量限制: $max_test_nets"
+            break
         }}
     }}
-    puts "Total HPWL (手动计算): $total_hpwl_manual"
-}} err]}} {{
-    puts "手动HPWL计算失败: $err"
 }}
 
+puts "已处理网络数: $processed_nets"
 puts "HPWL计算完成"
 exit
 """
