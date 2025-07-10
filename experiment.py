@@ -3434,26 +3434,103 @@ RL智能体选择的动作：
     def _generate_openroad_hpwl_report(self, design_dir: Path) -> Optional[float]:
         """生成OpenROAD HPWL报告"""
         try:
-            # 查找DEF文件
+            # 查找必要的文件
             def_files = list(design_dir.glob("*.def"))
+            lef_files = list(design_dir.glob("*.lef"))
+            
             if not def_files:
                 logger.warning("未找到DEF文件")
                 return None
             
             def_file = def_files[0]  # 使用第一个DEF文件
             
-            # 创建简单的TCL脚本来生成HPWL报告
+            # 创建完整的TCL脚本来生成HPWL报告
             tcl_script = f"""
-# OpenROAD HPWL计算脚本
+# OpenROAD HPWL计算脚本 - 完整版本
+puts "开始OpenROAD HPWL计算..."
+
+# 完全重置数据库
+if {{[info exists ::ord::db]}} {{
+    ord::reset_db
+}}
+
+# 读取LEF文件
+"""
+            
+            # 添加LEF文件读取
+            for lef_file in lef_files:
+                tcl_script += f"read_lef {lef_file.name}\n"
+            
+            tcl_script += f"""
+# 读取DEF文件
 read_def {def_file.name}
 
-# 生成HPWL报告
-report_wire_length -outfile hpwl_report.rpt
+# 检查设计状态
+set db [ord::get_db]
+set chip [$db getChip]
+if {{$chip == "NULL"}} {{
+    puts "错误：无法获取芯片对象"
+    exit 1
+}}
 
-# 获取总HPWL值
-set total_hpwl [get_total_wirelength]
-puts "Total HPWL: $total_hpwl"
+set block [$chip getBlock]
+if {{$block == "NULL"}} {{
+    puts "错误：无法获取块对象"
+    exit 1
+}}
 
+# 获取设计信息
+set insts [$block getInsts]
+set nets [$block getNets]
+set placed_insts 0
+set total_insts 0
+
+foreach inst $insts {{
+    if {{[$inst isPlaced]}} {{
+        incr placed_insts
+    }}
+    incr total_insts
+}}
+
+puts "设计信息："
+puts "  总实例数: $total_insts"
+puts "  已放置实例数: $placed_insts"
+puts "  网络数: [llength $nets]"
+
+# 计算HPWL
+puts "开始计算HPWL..."
+
+# 方法1：使用report_wire_length
+if {{[catch {{
+    report_wire_length -outfile hpwl_report.rpt
+    puts "HPWL报告已生成: hpwl_report.rpt"
+}} err]}} {{
+    puts "report_wire_length失败: $err"
+}}
+
+# 方法2：使用get_total_wirelength
+if {{[catch {{
+    set total_hpwl [get_total_wirelength]
+    puts "Total HPWL (get_total_wirelength): $total_hpwl"
+}} err]}} {{
+    puts "get_total_wirelength失败: $err"
+}}
+
+# 方法3：手动计算HPWL
+if {{[catch {{
+    set total_hpwl_manual 0
+    foreach net $nets {{
+        if {{[$net getSigType] == "SIGNAL"}} {{
+            set hpwl [$net getHPWL]
+            set total_hpwl_manual [expr $total_hpwl_manual + $hpwl]
+        }}
+    }}
+    puts "Total HPWL (手动计算): $total_hpwl_manual"
+}} err]}} {{
+    puts "手动HPWL计算失败: $err"
+}}
+
+puts "HPWL计算完成"
 exit
 """
             
@@ -3480,15 +3557,59 @@ exit
             if result.returncode == 0:
                 # 从输出中提取HPWL值
                 import re
+                hpwl_value = None
+                
+                # 尝试多种HPWL输出格式
                 for line in result.stdout.split('\n'):
-                    if 'Total HPWL:' in line:
+                    # 方法1：get_total_wirelength输出
+                    if 'Total HPWL (get_total_wirelength):' in line:
+                        hpwl_match = re.search(r'Total HPWL \(get_total_wirelength\):\s*([\d.]+)', line)
+                        if hpwl_match:
+                            hpwl_value = float(hpwl_match.group(1))
+                            logger.info(f"OpenROAD get_total_wirelength HPWL: {hpwl_value:.0f}")
+                            return hpwl_value
+                    
+                    # 方法2：手动计算输出
+                    elif 'Total HPWL (手动计算):' in line:
+                        hpwl_match = re.search(r'Total HPWL \(手动计算\):\s*([\d.]+)', line)
+                        if hpwl_match:
+                            hpwl_value = float(hpwl_match.group(1))
+                            logger.info(f"OpenROAD 手动计算HPWL: {hpwl_value:.0f}")
+                            return hpwl_value
+                    
+                    # 方法3：传统格式
+                    elif 'Total HPWL:' in line:
                         hpwl_match = re.search(r'Total HPWL:\s*([\d.]+)', line)
                         if hpwl_match:
                             hpwl_value = float(hpwl_match.group(1))
-                            logger.info(f"OpenROAD计算HPWL: {hpwl_value:.0f}")
+                            logger.info(f"OpenROAD 传统格式HPWL: {hpwl_value:.0f}")
+                            return hpwl_value
+                
+                # 如果从stdout没有找到，尝试从报告文件读取
+                report_file = design_dir / "hpwl_report.rpt"
+                if report_file.exists():
+                    logger.info(f"尝试从报告文件读取HPWL: {report_file}")
+                    with open(report_file, 'r') as f:
+                        report_content = f.read()
+                    
+                    # 从报告文件中提取HPWL
+                    hpwl_patterns = [
+                        r'Total wire length:\s*([\d.]+)\s*um',
+                        r'Total HPWL:\s*([\d.]+)',
+                        r'Wire length:\s*([\d.]+)',
+                        r'HPWL:\s*([\d.]+)'
+                    ]
+                    
+                    for pattern in hpwl_patterns:
+                        match = re.search(pattern, report_content)
+                        if match:
+                            hpwl_value = float(match.group(1))
+                            logger.info(f"从报告文件提取HPWL: {hpwl_value:.0f}")
                             return hpwl_value
             
-            logger.warning("OpenROAD HPWL计算失败")
+            logger.warning(f"OpenROAD HPWL计算失败，返回码: {result.returncode}")
+            if result.stderr:
+                logger.warning(f"OpenROAD错误输出: {result.stderr}")
             return None
             
         except Exception as e:
