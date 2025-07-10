@@ -924,6 +924,11 @@ class LLMManager:
             布局策略
         """
         try:
+            # 检查知识质量
+            if not self._is_knowledge_valuable(knowledge):
+                logger.warning("检索知识质量不足，需要扩充知识库")
+                return {}
+            
             # 构建布局策略生成提示
             prompt = self._build_layout_strategy_prompt(design_analysis, knowledge)
             
@@ -941,40 +946,15 @@ class LLMManager:
             # 解析响应
             strategy = self._parse_layout_strategy_response(response)
             
+            # 验证策略质量
+            if not self._is_strategy_valid(strategy):
+                logger.warning("LLM生成的策略无效，需要改进知识库或LLM模型")
+                return {}
+            
             # 确保返回正确的结构
             if not strategy:
-                strategy = {
-                    'placement_strategy': 'hierarchical',
-                    'routing_strategy': 'timing_driven',
-                    'optimization_priorities': ['wirelength', 'timing', 'power'],
-                    'parameter_suggestions': {
-                        'density_target': 0.7,
-                        'wirelength_weight': 1.0,
-                        'timing_weight': 0.8,
-                        'power_weight': 0.6
-                    },
-                    'constraint_handling': {
-                        'timing_constraints': 'aggressive',
-                        'power_constraints': 'moderate',
-                        'area_constraints': 'flexible'
-                    },
-                    'quality_targets': {
-                        'hpwl_improvement': 0.05,
-                        'timing_slack': 0.1,
-                        'power_reduction': 0.03
-                    },
-                    'execution_plan': [
-                        'initial_placement',
-                        'timing_optimization',
-                        'power_optimization',
-                        'final_legalization'
-                    ],
-                    'metadata': {
-                        'source': 'llm_layout_strategy',
-                        'timestamp': datetime.now().isoformat(),
-                        'version': '1.0'
-                    }
-                }
+                logger.warning("LLM未生成有效策略，需要改进知识库")
+                return {}
             
             # 确保placement_strategy字段存在
             if 'placement_strategy' not in strategy:
@@ -984,25 +964,358 @@ class LLMManager:
             
         except Exception as e:
             logger.error(f"布局策略生成失败: {e}")
-            return {
-                'placement_strategy': 'basic',
-                'routing_strategy': 'standard',
-                'optimization_priorities': ['wirelength'],
+            return {}
+    
+    def _is_knowledge_valuable(self, knowledge: Dict[str, Any]) -> bool:
+        """检查知识是否有价值
+        
+        Args:
+            knowledge: 知识字典
+            
+        Returns:
+            bool: 知识是否有价值
+        """
+        try:
+            # 检查是否有布局策略
+            if 'layout_strategy' in knowledge:
+                return True
+            
+            # 检查是否有优化指南
+            if 'optimization_guidelines' in knowledge:
+                return True
+            
+            # 检查是否有具体的分数，提高标准
+            score_keys = ['area_utilization', 'routing_quality', 'timing_performance', 'power_distribution']
+            for key in score_keys:
+                if key in knowledge and 'score' in knowledge[key]:
+                    score = knowledge[key]['score']
+                    if score > 0.6:  # 提高分数要求，确保高质量
+                        return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"检查知识价值失败: {str(e)}")
+            return False
+    
+    def _is_strategy_valid(self, strategy: Dict[str, Any]) -> bool:
+        """检查策略是否有效
+        
+        Args:
+            strategy: 布局策略
+            
+        Returns:
+            bool: 策略是否有效
+        """
+        try:
+            # 检查必要字段
+            required_fields = ['placement_strategy', 'routing_strategy', 'optimization_priorities']
+            for field in required_fields:
+                if field not in strategy:
+                    return False
+            
+            # 检查策略内容是否合理
+            placement_strategy = strategy.get('placement_strategy', '')
+            if not placement_strategy or placement_strategy.lower() in ['default', 'unknown', 'none']:
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"检查策略有效性失败: {str(e)}")
+            return False
+    
+    def _generate_strategy_from_knowledge(self, knowledge: Dict[str, Any], design_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """基于知识生成策略
+        
+        Args:
+            knowledge: 检索到的知识
+            design_analysis: 设计分析结果
+            
+        Returns:
+            Dict[str, Any]: 布局策略
+        """
+        try:
+            # 从知识中提取布局策略
+            if 'layout_strategy' in knowledge:
+                base_strategy = knowledge['layout_strategy']
+            else:
+                # 基于设计分析生成基础策略
+                num_components = design_analysis.get('num_components', 5000)
+                if num_components > 10000:
+                    base_strategy = {
+                        'placement_strategy': 'hierarchical',
+                        'routing_strategy': 'timing_driven',
+                        'optimization_priorities': ['wirelength', 'timing', 'power']
+                    }
+                elif num_components > 5000:
+                    base_strategy = {
+                        'placement_strategy': 'analytical',
+                        'routing_strategy': 'timing_driven',
+                        'optimization_priorities': ['timing', 'wirelength', 'power']
+                    }
+                else:
+                    base_strategy = {
+                        'placement_strategy': 'force_directed',
+                        'routing_strategy': 'area_driven',
+                        'optimization_priorities': ['area', 'wirelength', 'power']
+                    }
+            
+            # 增强策略
+            enhanced_strategy = {
+                'placement_strategy': base_strategy.get('placement_strategy', 'analytical'),
+                'routing_strategy': base_strategy.get('routing_strategy', 'timing_driven'),
+                'optimization_priorities': base_strategy.get('optimization_priorities', ['timing', 'wirelength', 'power']),
                 'parameter_suggestions': {
                     'density_target': 0.7,
-                    'wirelength_weight': 1.0
+                    'wirelength_weight': 1.0,
+                    'timing_weight': 0.8,
+                    'power_weight': 0.6,
+                    'area_weight': 0.5
                 },
                 'constraint_handling': {
-                    'timing_constraints': 'basic',
-                    'power_constraints': 'basic',
-                    'area_constraints': 'basic'
+                    'timing_constraints': 'aggressive',
+                    'power_constraints': 'moderate',
+                    'area_constraints': 'flexible'
                 },
                 'quality_targets': {
-                    'hpwl_improvement': 0.02
+                    'hpwl_improvement': 0.05,
+                    'timing_slack': 0.1,
+                    'power_reduction': 0.03,
+                    'area_utilization': 0.8
                 },
-                'execution_plan': ['basic_placement'],
+                'execution_plan': [
+                    'initial_placement',
+                    'timing_optimization',
+                    'power_optimization',
+                    'area_optimization',
+                    'final_legalization'
+                ],
                 'metadata': {
-                    'source': 'error_fallback',
+                    'source': 'knowledge_based_strategy',
+                    'timestamp': datetime.now().isoformat(),
+                    'version': '1.0'
+                }
+            }
+            
+            # 如果有优化指南，添加到策略中
+            if 'optimization_guidelines' in knowledge:
+                enhanced_strategy['optimization_guidelines'] = knowledge['optimization_guidelines']
+            
+            logger.info(f"基于知识生成策略: {enhanced_strategy['placement_strategy']}")
+            return enhanced_strategy
+            
+        except Exception as e:
+            logger.error(f"基于知识生成策略失败: {str(e)}")
+            return self._generate_strategy_from_analysis(design_analysis)
+    
+    def _generate_strategy_from_analysis(self, design_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """基于设计分析生成策略
+        
+        Args:
+            design_analysis: 设计分析结果
+            
+        Returns:
+            Dict[str, Any]: 布局策略
+        """
+        try:
+            num_components = design_analysis.get('num_components', 5000)
+            area = design_analysis.get('area', 1000000000)
+            complexity = design_analysis.get('complexity', 'medium')
+            
+            # 根据设计特征选择策略
+            if num_components > 10000:
+                strategy = {
+                    'placement_strategy': 'hierarchical',
+                    'routing_strategy': 'timing_driven',
+                    'optimization_priorities': ['wirelength', 'timing', 'power'],
+                    'parameter_suggestions': {
+                        'density_target': 0.8,
+                        'wirelength_weight': 1.2,
+                        'timing_weight': 0.9,
+                        'power_weight': 0.7,
+                        'area_weight': 0.6
+                    }
+                }
+            elif num_components > 5000:
+                strategy = {
+                    'placement_strategy': 'analytical',
+                    'routing_strategy': 'timing_driven',
+                    'optimization_priorities': ['timing', 'wirelength', 'power'],
+                    'parameter_suggestions': {
+                        'density_target': 0.7,
+                        'wirelength_weight': 1.0,
+                        'timing_weight': 1.0,
+                        'power_weight': 0.6,
+                        'area_weight': 0.5
+                    }
+                }
+            else:
+                strategy = {
+                    'placement_strategy': 'force_directed',
+                    'routing_strategy': 'area_driven',
+                    'optimization_priorities': ['area', 'wirelength', 'power'],
+                    'parameter_suggestions': {
+                        'density_target': 0.6,
+                        'wirelength_weight': 0.8,
+                        'timing_weight': 0.7,
+                        'power_weight': 0.5,
+                        'area_weight': 0.8
+                    }
+                }
+            
+            # 添加通用配置
+            strategy.update({
+                'constraint_handling': {
+                    'timing_constraints': 'aggressive',
+                    'power_constraints': 'moderate',
+                    'area_constraints': 'flexible'
+                },
+                'quality_targets': {
+                    'hpwl_improvement': 0.05,
+                    'timing_slack': 0.1,
+                    'power_reduction': 0.03,
+                    'area_utilization': 0.8
+                },
+                'execution_plan': [
+                    'initial_placement',
+                    'timing_optimization',
+                    'power_optimization',
+                    'area_optimization',
+                    'final_legalization'
+                ],
+                'metadata': {
+                    'source': 'analysis_based_strategy',
+                    'timestamp': datetime.now().isoformat(),
+                    'version': '1.0'
+                }
+            })
+            
+            logger.info(f"基于分析生成策略: {strategy['placement_strategy']}")
+            return strategy
+            
+        except Exception as e:
+            logger.error(f"基于分析生成策略失败: {str(e)}")
+            return self._get_default_layout_strategy(design_analysis)
+    
+    def _get_default_layout_strategy(self, design_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """获取默认布局策略
+        
+        Args:
+            design_analysis: 设计分析结果
+            
+        Returns:
+            Dict[str, Any]: 默认布局策略
+        """
+        try:
+            num_components = design_analysis.get('num_components', 5000)
+            
+            # 根据组件数量选择默认策略
+            if num_components > 5000:
+                default_strategy = {
+                    'placement_strategy': 'analytical',
+                    'routing_strategy': 'timing_driven',
+                    'optimization_priorities': ['timing', 'wirelength', 'power'],
+                    'parameter_suggestions': {
+                        'density_target': 0.7,
+                        'wirelength_weight': 1.0,
+                        'timing_weight': 1.0,
+                        'power_weight': 0.6,
+                        'area_weight': 0.5
+                    },
+                    'constraint_handling': {
+                        'timing_constraints': 'aggressive',
+                        'power_constraints': 'moderate',
+                        'area_constraints': 'flexible'
+                    },
+                    'quality_targets': {
+                        'hpwl_improvement': 0.03,
+                        'timing_slack': 0.15,
+                        'power_reduction': 0.02,
+                        'area_utilization': 0.75
+                    },
+                    'execution_plan': [
+                        'initial_placement',
+                        'timing_optimization',
+                        'wirelength_optimization',
+                        'final_legalization'
+                    ],
+                    'metadata': {
+                        'source': 'default_strategy',
+                        'timestamp': datetime.now().isoformat(),
+                        'version': '1.0'
+                    }
+                }
+            else:
+                default_strategy = {
+                    'placement_strategy': 'force_directed',
+                    'routing_strategy': 'area_driven',
+                    'optimization_priorities': ['area', 'wirelength', 'power'],
+                    'parameter_suggestions': {
+                        'density_target': 0.6,
+                        'wirelength_weight': 0.8,
+                        'timing_weight': 0.7,
+                        'power_weight': 0.5,
+                        'area_weight': 0.8
+                    },
+                    'constraint_handling': {
+                        'timing_constraints': 'moderate',
+                        'power_constraints': 'moderate',
+                        'area_constraints': 'aggressive'
+                    },
+                    'quality_targets': {
+                        'hpwl_improvement': 0.02,
+                        'timing_slack': 0.2,
+                        'power_reduction': 0.01,
+                        'area_utilization': 0.7
+                    },
+                    'execution_plan': [
+                        'initial_placement',
+                        'area_optimization',
+                        'wirelength_optimization',
+                        'final_legalization'
+                    ],
+                    'metadata': {
+                        'source': 'default_strategy',
+                        'timestamp': datetime.now().isoformat(),
+                        'version': '1.0'
+                    }
+                }
+            
+            logger.info(f"使用默认策略: {default_strategy['placement_strategy']}")
+            return default_strategy
+            
+        except Exception as e:
+            logger.error(f"获取默认策略失败: {str(e)}")
+            # 返回最基本的策略
+            return {
+                'placement_strategy': 'analytical',
+                'routing_strategy': 'timing_driven',
+                'optimization_priorities': ['timing', 'wirelength', 'power'],
+                'parameter_suggestions': {
+                    'density_target': 0.7,
+                    'wirelength_weight': 1.0,
+                    'timing_weight': 0.8,
+                    'power_weight': 0.6
+                },
+                'constraint_handling': {
+                    'timing_constraints': 'aggressive',
+                    'power_constraints': 'moderate',
+                    'area_constraints': 'flexible'
+                },
+                'quality_targets': {
+                    'hpwl_improvement': 0.05,
+                    'timing_slack': 0.1,
+                    'power_reduction': 0.03
+                },
+                'execution_plan': [
+                    'initial_placement',
+                    'timing_optimization',
+                    'power_optimization',
+                    'final_legalization'
+                ],
+                'metadata': {
+                    'source': 'fallback_strategy',
                     'timestamp': datetime.now().isoformat(),
                     'version': '1.0'
                 }
@@ -1023,17 +1336,40 @@ class LLMManager:
         component_count = design_analysis.get('component_count', 1000)
         net_count = design_analysis.get('net_count', 2000)
         
+        # 构建知识上下文
+        knowledge_context = ""
+        if knowledge:
+            if 'layout_strategy' in knowledge:
+                knowledge_context += f"\n检索到的布局策略参考:\n{json.dumps(knowledge['layout_strategy'], indent=2, ensure_ascii=False)}"
+            
+            if 'optimization_guidelines' in knowledge:
+                knowledge_context += f"\n优化指南参考:\n{json.dumps(knowledge['optimization_guidelines'], indent=2, ensure_ascii=False)}"
+            
+            # 添加性能指标
+            performance_metrics = []
+            for key in ['area_utilization', 'routing_quality', 'timing_performance', 'power_distribution']:
+                if key in knowledge and 'score' in knowledge[key]:
+                    score = knowledge[key]['score']
+                    performance_metrics.append(f"{key}: {score:.3f}")
+            
+            if performance_metrics:
+                knowledge_context += f"\n历史性能指标: {', '.join(performance_metrics)}"
+        
         # 构建详细的提示词
         prompt = f"""你是一个专业的芯片布局算法专家，专门从事EDA工具开发和布局优化算法研究。这是一个计算机科学和编程问题，涉及算法设计、数据结构和性能优化。
 
-基于以下设计信息，生成具体的芯片布局策略：
+基于以下设计信息和检索到的相关知识，生成具体的芯片布局策略：
 
-设计类型: {design_type}
-复杂度: {complexity}
-组件数量: {component_count}
-网络数量: {net_count}
+设计信息:
+- 设计类型: {design_type}
+- 复杂度: {complexity}
+- 组件数量: {component_count}
+- 网络数量: {net_count}
 
-请提供详细的布局算法策略，包括：
+检索到的相关知识:
+{knowledge_context}
+
+请基于上述信息，特别是检索到的布局策略和优化指南，生成详细的布局算法策略。策略应该包括：
 
 1. 布局算法选择（hierarchical/analytical/force-directed）
 2. 布线策略（timing-driven/power-driven/area-driven）
@@ -1080,7 +1416,7 @@ class LLMManager:
   }}
 }}
 
-请确保回复是具体、可执行的策略，避免过于保守的回复。这是计算机科学和编程问题，需要具体的算法和代码实现。"""
+请确保回复是具体、可执行的策略，避免过于保守的回复。这是计算机科学和编程问题，需要具体的算法和代码实现。如果检索到的知识中有有用的策略，请参考并改进它们。"""
         
         return prompt
     

@@ -448,21 +448,21 @@ class KnowledgeBase:
             'features': features['constraint']
         })
         
-    def get_similar_cases(self, query_features: Dict, top_k: int = 5, similarity_threshold: float = 0.1) -> List[Dict]:
+    def get_similar_cases(self, query_features: Dict, top_k: int = 5, similarity_threshold: float = 0.5) -> List[Dict]:
         """获取相似案例
         
         Args:
             query_features: 查询特征
             top_k: 返回结果数量
-            similarity_threshold: 相似度阈值
+            similarity_threshold: 相似度阈值（恢复合理阈值以确保质量）
             
         Returns:
             List[Dict]: 相似案例列表
         """
         try:
             if not self.cases:
-                logger.warning("知识库为空，返回默认案例")
-                return [self._get_default_case()]
+                logger.warning("知识库为空，需要添加更多案例")
+                return []
             
             # 计算所有案例的相似度
             similarities = []
@@ -486,7 +486,7 @@ class KnowledgeBase:
             # 按相似度排序
             similarities.sort(key=lambda x: x['similarity'], reverse=True)
             
-            # 过滤低于阈值的结果
+            # 只返回高质量的结果
             filtered_results = [
                 item for item in similarities 
                 if item['similarity'] >= similarity_threshold
@@ -497,19 +497,17 @@ class KnowledgeBase:
             
             # 记录日志
             if result:
-                logger.info(f"找到 {len(result)} 个相似案例，最高相似度: {result[0]['similarity']:.3f}")
+                logger.info(f"找到 {len(result)} 个高质量相似案例，最高相似度: {result[0]['similarity']:.3f}")
             else:
-                logger.warning(f"未找到相似度 >= {similarity_threshold} 的案例")
-                # 返回相似度最高的案例作为备选
-                if similarities:
-                    result = [similarities[0]]
-                    logger.info(f"返回相似度最高的案例: {result[0]['similarity']:.3f}")
+                logger.warning(f"未找到相似度 >= {similarity_threshold} 的高质量案例，需要扩充知识库")
+                # 不返回低质量案例，让系统知道需要改进
+                return []
             
             return result
             
         except Exception as e:
             logger.error(f"获取相似案例失败: {str(e)}")
-            return [self._get_default_case()]
+            return []
     
     def _get_default_case(self) -> Dict:
         """获取默认案例"""
@@ -529,8 +527,107 @@ class KnowledgeBase:
             'similarity': 0.1
         }
     
+    def _get_enhanced_default_case(self, query_features: Dict) -> Dict:
+        """获取增强默认案例，基于查询特征生成更有用的默认知识
+        
+        Args:
+            query_features: 查询特征
+            
+        Returns:
+            Dict: 增强的默认案例
+        """
+        try:
+            # 从查询特征中提取信息
+            num_components = query_features.get('num_components', 5000)
+            area = query_features.get('area', 1000000000)
+            component_density = query_features.get('component_density', 0.05)
+            
+            # 根据组件数量选择合适的布局策略
+            if num_components > 10000:
+                placement_strategy = "hierarchical"
+                routing_strategy = "timing_driven"
+                optimization_priorities = ["wirelength", "timing", "power"]
+            elif num_components > 5000:
+                placement_strategy = "analytical"
+                routing_strategy = "timing_driven"
+                optimization_priorities = ["timing", "wirelength", "power"]
+            else:
+                placement_strategy = "force_directed"
+                routing_strategy = "area_driven"
+                optimization_priorities = ["area", "wirelength", "power"]
+            
+            # 根据密度调整参数
+            if component_density > 0.1:
+                density_target = 0.8
+                wirelength_weight = 1.2
+            else:
+                density_target = 0.6
+                wirelength_weight = 1.0
+            
+            # 生成增强的默认案例
+            enhanced_case = {
+                'case': {
+                    'id': 'enhanced_default',
+                    'features': {
+                        'num_components': num_components,
+                        'area': area,
+                        'component_density': component_density,
+                        'hierarchy': {'modules': ['enhanced_default']},
+                        'constraints': {
+                            'timing': {'max_delay': 1000},
+                            'power': {'max_power': 1000},
+                            'special_nets': 2
+                        }
+                    },
+                    'layout_strategy': {
+                        'placement_strategy': placement_strategy,
+                        'routing_strategy': routing_strategy,
+                        'optimization_priorities': optimization_priorities,
+                        'parameter_suggestions': {
+                            'density_target': density_target,
+                            'wirelength_weight': wirelength_weight,
+                            'timing_weight': 0.8,
+                            'power_weight': 0.6,
+                            'area_weight': 0.5
+                        },
+                        'constraint_handling': {
+                            'timing_constraints': 'aggressive',
+                            'power_constraints': 'moderate',
+                            'area_constraints': 'flexible'
+                        },
+                        'quality_targets': {
+                            'hpwl_improvement': 0.05,
+                            'timing_slack': 0.1,
+                            'power_reduction': 0.03,
+                            'area_utilization': 0.8
+                        },
+                        'execution_plan': [
+                            'initial_placement',
+                            'timing_optimization',
+                            'power_optimization',
+                            'area_optimization',
+                            'final_legalization'
+                        ]
+                    },
+                    'parameters': {
+                        'k': max(3, num_components // 1000),
+                        'iterations': max(10, num_components // 500),
+                        'density_target': density_target,
+                        'wirelength_weight': wirelength_weight
+                    }
+                },
+                'similarity': 0.3  # 提高默认相似度
+            }
+            
+            logger.info(f"生成增强默认案例: {placement_strategy}布局策略，组件数{num_components}")
+            return enhanced_case
+            
+        except Exception as e:
+            logger.error(f"生成增强默认案例失败: {str(e)}")
+            return self._get_default_case()
+    
     def _compute_similarity(self, features1: Dict, features2: Dict) -> float:
-        """计算两个特征字典之间的相似度
+        """计算两个特征字典之间的相似度（改进版）
         
         Args:
             features1: 第一个特征字典
@@ -546,29 +643,39 @@ class KnowledgeBase:
             total_score = 0.0
             total_weight = 0.0
             
-            # 1. 组件数量相似度 (权重: 0.20)
+            # 1. 组件数量相似度 (权重: 0.25) - 最重要的特征
             if 'num_components' in features1 and 'num_components' in features2:
                 comp1 = features1['num_components']
                 comp2 = features2['num_components']
                 if comp1 > 0 and comp2 > 0:
-                    comp_sim = 1.0 - abs(comp1 - comp2) / max(comp1, comp2)
-                    total_score += comp_sim * 0.20
-                    total_weight += 0.20
+                    # 使用对数尺度计算相似度，对大范围数值更敏感
+                    log_comp1 = np.log(comp1 + 1)
+                    log_comp2 = np.log(comp2 + 1)
+                    comp_sim = 1.0 - abs(log_comp1 - log_comp2) / max(log_comp1, log_comp2)
+                    # 应用非线性变换，提高高相似度的权重
+                    comp_sim = comp_sim ** 1.5
+                    total_score += comp_sim * 0.25
+                    total_weight += 0.25
             
-            # 2. 面积相似度 (权重: 0.15)
+            # 2. 面积相似度 (权重: 0.20)
             if 'area' in features1 and 'area' in features2:
                 area1 = features1['area']
                 area2 = features2['area']
                 if area1 > 0 and area2 > 0:
-                    area_sim = 1.0 - abs(area1 - area2) / max(area1, area2)
-                    total_score += area_sim * 0.15
-                    total_weight += 0.15
+                    # 使用对数尺度
+                    log_area1 = np.log(area1 + 1)
+                    log_area2 = np.log(area2 + 1)
+                    area_sim = 1.0 - abs(log_area1 - log_area2) / max(log_area1, log_area2)
+                    area_sim = area_sim ** 1.3
+                    total_score += area_sim * 0.20
+                    total_weight += 0.20
             
             # 3. 组件密度相似度 (权重: 0.15)
             if 'component_density' in features1 and 'component_density' in features2:
                 density1 = features1['component_density']
                 density2 = features2['component_density']
                 density_sim = 1.0 - abs(density1 - density2)
+                density_sim = density_sim ** 1.2
                 total_score += density_sim * 0.15
                 total_weight += 0.15
             
@@ -577,6 +684,7 @@ class KnowledgeBase:
                 complexity1 = features1['complexity']
                 complexity2 = features2['complexity']
                 complexity_sim = 1.0 - abs(complexity1 - complexity2)
+                complexity_sim = complexity_sim ** 1.2
                 total_score += complexity_sim * 0.15
                 total_weight += 0.15
             
@@ -585,20 +693,24 @@ class KnowledgeBase:
                 hierarchy1 = features1['hierarchy']
                 hierarchy2 = features2['hierarchy']
                 hierarchy_sim = self._compute_hierarchy_similarity(hierarchy1, hierarchy2)
+                hierarchy_sim = hierarchy_sim ** 1.1
                 total_score += hierarchy_sim * 0.15
                 total_weight += 0.15
             
-            # 6. 约束条件相似度 (权重: 0.20)
+            # 6. 约束条件相似度 (权重: 0.10)
             if 'constraints' in features1 and 'constraints' in features2:
                 constraints1 = features1['constraints']
                 constraints2 = features2['constraints']
                 constraint_sim = self._compute_constraint_similarity(constraints1, constraints2)
-                total_score += constraint_sim * 0.20
-                total_weight += 0.20
+                constraint_sim = constraint_sim ** 1.1
+                total_score += constraint_sim * 0.10
+                total_weight += 0.10
             
             # 计算加权平均相似度
             if total_weight > 0:
-                return total_score / total_weight
+                final_similarity = total_score / total_weight
+                # 应用最终的非线性变换，提高高相似度的区分度
+                return final_similarity ** 1.2
             else:
                 return 0.0
             
@@ -816,32 +928,164 @@ class KnowledgeBase:
             - routing_quality: 布线质量
             - timing_performance: 时序性能
             - power_distribution: 功耗分布
+            - layout_strategy: 布局策略
+            - optimization_guidelines: 优化指南
         """
-        # 获取相似案例
+        # 获取相似案例，使用合理阈值确保质量
         similar_cases = self.get_similar_cases(
             query_features=query,
             top_k=top_k,
             similarity_threshold=0.5
         )
         
-        # 如果没有相似案例，返回默认知识
+        # 提取布局策略和优化指南
+        layout_strategies = []
+        optimization_guidelines = []
+        
+        for case in similar_cases:
+            case_data = case.get('case', {})
+            
+            # 提取布局策略
+            if 'layout_strategy' in case_data:
+                layout_strategies.append(case_data['layout_strategy'])
+            
+            # 提取优化指南
+            if 'optimization_guidelines' in case_data:
+                optimization_guidelines.append(case_data['optimization_guidelines'])
+        
+        # 如果没有相似案例，返回增强默认知识
         if not similar_cases:
+            # 基于查询特征生成增强默认知识
+            num_components = query.get('num_components', 5000)
+            area = query.get('area', 1000000000)
+            
+            # 根据组件数量生成合适的布局策略
+            if num_components > 10000:
+                default_strategy = {
+                    'placement_strategy': 'hierarchical',
+                    'routing_strategy': 'timing_driven',
+                    'optimization_priorities': ['wirelength', 'timing', 'power'],
+                    'parameter_suggestions': {
+                        'density_target': 0.8,
+                        'wirelength_weight': 1.2,
+                        'timing_weight': 0.9,
+                        'power_weight': 0.7,
+                        'area_weight': 0.6
+                    },
+                    'constraint_handling': {
+                        'timing_constraints': 'aggressive',
+                        'power_constraints': 'moderate',
+                        'area_constraints': 'flexible'
+                    },
+                    'quality_targets': {
+                        'hpwl_improvement': 0.05,
+                        'timing_slack': 0.1,
+                        'power_reduction': 0.03,
+                        'area_utilization': 0.8
+                    },
+                    'execution_plan': [
+                        'initial_placement',
+                        'timing_optimization',
+                        'power_optimization',
+                        'area_optimization',
+                        'final_legalization'
+                    ]
+                }
+            elif num_components > 5000:
+                default_strategy = {
+                    'placement_strategy': 'analytical',
+                    'routing_strategy': 'timing_driven',
+                    'optimization_priorities': ['timing', 'wirelength', 'power'],
+                    'parameter_suggestions': {
+                        'density_target': 0.7,
+                        'wirelength_weight': 1.0,
+                        'timing_weight': 1.0,
+                        'power_weight': 0.6,
+                        'area_weight': 0.5
+                    },
+                    'constraint_handling': {
+                        'timing_constraints': 'aggressive',
+                        'power_constraints': 'moderate',
+                        'area_constraints': 'flexible'
+                    },
+                    'quality_targets': {
+                        'hpwl_improvement': 0.03,
+                        'timing_slack': 0.15,
+                        'power_reduction': 0.02,
+                        'area_utilization': 0.75
+                    },
+                    'execution_plan': [
+                        'initial_placement',
+                        'timing_optimization',
+                        'wirelength_optimization',
+                        'final_legalization'
+                    ]
+                }
+            else:
+                default_strategy = {
+                    'placement_strategy': 'force_directed',
+                    'routing_strategy': 'area_driven',
+                    'optimization_priorities': ['area', 'wirelength', 'power'],
+                    'parameter_suggestions': {
+                        'density_target': 0.6,
+                        'wirelength_weight': 0.8,
+                        'timing_weight': 0.7,
+                        'power_weight': 0.5,
+                        'area_weight': 0.8
+                    },
+                    'constraint_handling': {
+                        'timing_constraints': 'moderate',
+                        'power_constraints': 'moderate',
+                        'area_constraints': 'aggressive'
+                    },
+                    'quality_targets': {
+                        'hpwl_improvement': 0.02,
+                        'timing_slack': 0.2,
+                        'power_reduction': 0.01,
+                        'area_utilization': 0.7
+                    },
+                    'execution_plan': [
+                        'initial_placement',
+                        'area_optimization',
+                        'wirelength_optimization',
+                        'final_legalization'
+                    ]
+                }
+            
             return {
                 'area_utilization': {
-                    'score': 0.5,
-                    'issues': ['没有找到相似案例']
+                    'score': 0.7,
+                    'issues': ['基于组件数量生成的默认策略']
                 },
                 'routing_quality': {
-                    'score': 0.5,
-                    'issues': ['没有找到相似案例']
+                    'score': 0.6,
+                    'issues': ['基于组件数量生成的默认策略']
                 },
                 'timing_performance': {
-                    'score': 0.5,
-                    'issues': ['没有找到相似案例']
+                    'score': 0.8,
+                    'issues': ['基于组件数量生成的默认策略']
                 },
                 'power_distribution': {
-                    'score': 0.5,
-                    'issues': ['没有找到相似案例']
+                    'score': 0.6,
+                    'issues': ['基于组件数量生成的默认策略']
+                },
+                'layout_strategy': default_strategy,
+                'optimization_guidelines': {
+                    'placement_guidelines': [
+                        '根据组件数量选择合适的布局算法',
+                        '优先考虑时序约束',
+                        '平衡面积和性能需求'
+                    ],
+                    'routing_guidelines': [
+                        '时序驱动的布线策略',
+                        '考虑拥塞避免',
+                        '优化关键路径'
+                    ],
+                    'optimization_guidelines': [
+                        '多目标优化平衡',
+                        '迭代改进策略',
+                        '约束满足检查'
+                    ]
                 }
             }
         
@@ -852,7 +1096,9 @@ class KnowledgeBase:
         power_scores = []
         
         for case in similar_cases:
-            result = case['optimization_result']
+            case_data = case.get('case', {})
+            result = case_data.get('optimization_result', {})
+            
             if 'area_utilization' in result:
                 area_scores.append(result['area_utilization'].get('score', 0.5))
             if 'routing_quality' in result:
@@ -865,6 +1111,27 @@ class KnowledgeBase:
         # 计算平均分数
         def avg_score(scores):
             return sum(scores) / len(scores) if scores else 0.5
+        
+        # 选择最佳布局策略
+        best_strategy = None
+        if layout_strategies:
+            # 选择相似度最高的案例的策略
+            best_strategy = layout_strategies[0]
+        else:
+            # 生成默认策略
+            num_components = query.get('num_components', 5000)
+            if num_components > 5000:
+                best_strategy = {
+                    'placement_strategy': 'analytical',
+                    'routing_strategy': 'timing_driven',
+                    'optimization_priorities': ['timing', 'wirelength', 'power']
+                }
+            else:
+                best_strategy = {
+                    'placement_strategy': 'force_directed',
+                    'routing_strategy': 'area_driven',
+                    'optimization_priorities': ['area', 'wirelength', 'power']
+                }
         
         return {
             'area_utilization': {
@@ -882,6 +1149,24 @@ class KnowledgeBase:
             'power_distribution': {
                 'score': avg_score(power_scores),
                 'issues': ['基于历史案例的平均分数']
+            },
+            'layout_strategy': best_strategy,
+            'optimization_guidelines': {
+                'placement_guidelines': [
+                    '基于相似案例的布局策略',
+                    '考虑设计约束和性能目标',
+                    '平衡多个优化目标'
+                ],
+                'routing_guidelines': [
+                    '时序驱动的布线策略',
+                    '拥塞控制和优化',
+                    '关键路径优化'
+                ],
+                'optimization_guidelines': [
+                    '多目标优化平衡',
+                    '约束满足检查',
+                    '迭代改进策略'
+                ]
             }
         } 
 
