@@ -3252,21 +3252,26 @@ RL智能体选择的动作：
                         for i, part in enumerate(parts):
                             if any(placed in part for placed in ['PLACED', 'FIXED', 'COVER']):
                                 try:
-                                    # 查找坐标
-                                    coord_start = i + 1
-                                    if coord_start + 3 < len(parts):
-                                        x_str = parts[coord_start].replace('(', '').replace(')', '')
-                                        y_str = parts[coord_start + 1].replace('(', '').replace(')', '')
-                                        lx = float(x_str)
-                                        ly = float(y_str)
-                                        
-                                        components[comp_name] = {
-                                            'dx': dx, 'dy': dy,
-                                            'lx': lx, 'ly': ly
-                                        }
-                                        placed_count += 1
-                                        break
-                                except (ValueError, IndexError):
+                                    # 查找坐标 - 修正格式解析
+                                    # 格式: + PLACED ( x y ) orientation
+                                    if i + 1 < len(parts) and parts[i + 1].startswith('('):
+                                        coord_part = parts[i + 1]
+                                        # 提取坐标: ( x y )
+                                        coord_match = re.search(r'\(([^)]+)\)', coord_part)
+                                        if coord_match:
+                                            coords = coord_match.group(1).split()
+                                            if len(coords) >= 2:
+                                                lx = float(coords[0])
+                                                ly = float(coords[1])
+                                                
+                                                components[comp_name] = {
+                                                    'dx': dx, 'dy': dy,
+                                                    'lx': lx, 'ly': ly
+                                                }
+                                                placed_count += 1
+                                                break
+                                except (ValueError, IndexError) as e:
+                                    logger.debug(f"  解析组件 {comp_name} 坐标失败: {e}")
                                     continue
             
             logger.info(f"  成功解析 {placed_count} 个已放置组件")
