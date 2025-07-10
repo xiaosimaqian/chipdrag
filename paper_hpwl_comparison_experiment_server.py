@@ -598,26 +598,89 @@ if {{[catch {{
     puts "使用预设设计名称: $design_name"
 }}
 
+# 检测可用的site信息
+puts "检测可用的site信息..."
+set available_sites [list]
+set tech [ord::get_db_tech]
+if {{$tech != ""}} {{
+    set sites [$tech getSites]
+    foreach site $sites {{
+        lappend available_sites [$site getName]
+    }}
+    puts "✅ 检测到sites: $available_sites"
+}} else {{
+    puts "⚠️ 无法获取技术信息，使用默认sites"
+    set available_sites [list "core" "CoreSite" "unit" "CORE"]
+}}
+
 # 初始化floorplan
 puts "初始化floorplan..."
 puts "  利用率: {utilization}"
 puts "  长宽比: {aspect_ratio}"
 
-if {{[catch {{
-    initialize_floorplan -utilization {utilization} -aspect_ratio {aspect_ratio} -core_space 20
-    puts "✅ floorplan初始化成功"
-}} err]}} {{
-    puts "❌ floorplan初始化失败: $err"
-    puts "尝试备用初始化方法..."
+set floorplan_success 0
+
+# 尝试使用检测到的sites
+foreach site $available_sites {{
+    puts "尝试使用site: $site"
+    if {{![catch {{
+        initialize_floorplan -utilization {utilization} -aspect_ratio {aspect_ratio} -core_space 20 -site $site
+        puts "✅ 使用site $site 初始化floorplan成功"
+        set floorplan_success 1
+        break
+    }} err]}} {{
+        set floorplan_success 1
+        break
+    }} else {{
+        puts "❌ site $site 初始化失败: $err"
+    }}
+}}
+
+# 如果所有site都失败，尝试手动指定区域
+if {{!$floorplan_success}} {{
+    puts "尝试手动指定区域初始化..."
     
-    # 尝试手动指定区域
+    # 尝试不同的手动区域配置
+    set manual_configs [list \\
+        {{0 0 2000 2000}} {{100 100 1900 1900}} \\
+        {{0 0 3000 3000}} {{150 150 2850 2850}} \\
+        {{0 0 1500 1500}} {{75 75 1425 1425}}]
+    
+    foreach config $manual_configs {{
+        set die_area [lindex $config 0]
+        set core_area [lindex $config 1]
+        puts "尝试区域配置: die_area=$die_area, core_area=$core_area"
+        
+        if {{![catch {{
+            initialize_floorplan -die_area $die_area -core_area $core_area -site [lindex $available_sites 0]
+            puts "✅ 手动区域初始化成功"
+            set floorplan_success 1
+            break
+        }} err]}} {{
+            set floorplan_success 1
+            break
+        }} else {{
+            puts "❌ 手动区域配置失败: $err"
+        }}
+    }}
+}}
+
+# 最后的fallback尝试
+if {{!$floorplan_success}} {{
+    puts "尝试最基本的初始化方法..."
     if {{[catch {{
-        initialize_floorplan -die_area {{0 0 2000 2000}} -core_area {{100 100 1900 1900}}
-        puts "✅ 手动区域初始化成功"
-    }} err2]}} {{
-        puts "❌ 手动初始化也失败: $err2"
+        initialize_floorplan -die_area {{0 0 1000 1000}} -core_area {{50 50 950 950}}
+        puts "✅ 基本初始化成功"
+        set floorplan_success 1
+    }} err]}} {{
+        puts "❌ 基本初始化也失败: $err"
         exit 1
     }}
+}}
+
+if {{!$floorplan_success}} {{
+    puts "❌ 所有floorplan初始化方法都失败"
+    exit 1
 }}
 
 # 全局布局（利用服务器多核）
