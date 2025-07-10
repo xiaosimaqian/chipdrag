@@ -3250,8 +3250,8 @@ RL智能体选择的动作：
                         
                         # 调试：检查前几个组件行
                         if placed_count < 3:
-                            logger.debug(f"  解析组件行: {line}")
-                            logger.debug(f"  组件名: {comp_name}, 部分: {parts}")
+                            logger.info(f"  解析组件行: {line}")
+                            logger.info(f"  组件名: {comp_name}, 部分: {parts}")
                         
                         # 查找PLACED位置 - 修正格式解析
                         # 格式: - component_name cell_type + PLACED ( x y ) orientation ;
