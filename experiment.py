@@ -49,6 +49,7 @@ import subprocess
 import time
 import argparse
 import shutil
+import pickle
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Set
 from datetime import datetime
@@ -139,6 +140,22 @@ class UnifiedPaperExperiment:
         
         # 设置日志系统
         self.log_file = setup_logging(self.base_dir)
+        
+        # 性能监控器
+        self.performance_monitor = None
+        self.monitoring_enabled = False
+        
+        # 案例提取器配置
+        self.case_extractor_config = {
+            'results_dirs': [
+                Path("paper_hpwl_results"),
+                Path("paper_ablation_results"),
+                Path("data/knowledge_base"),
+                Path("layout_experience")
+            ],
+            'output_dir': Path("data/knowledge_base"),
+            'real_features_cache': {}
+        }
         
         # 设置数据目录 - 检查多个可能的路径
         possible_paths = [
@@ -456,6 +473,16 @@ class UnifiedPaperExperiment:
                 'hierarchy': 0.25
             }
         })
+
+        # 步骤0: 预处理阶段 - 提取训练案例和改进相似度
+        logger.info("=== 步骤0: 预处理阶段 ===")
+        logger.info("提取训练案例...")
+        training_cases = self.extract_training_cases()
+        logger.info(f"训练案例提取完成: {len(training_cases)} 个案例")
+        
+        logger.info("改进案例相似度...")
+        improved_cases = self.improve_case_similarity()
+        logger.info(f"案例相似度改进完成: {len(improved_cases)} 个案例")
 
         # 步骤1: 数据准备阶段
         logger.info("=== 步骤1: 数据准备阶段 ===")
@@ -997,13 +1024,29 @@ class UnifiedPaperExperiment:
     
     def _generate_openroad_script_docker(self, layout_strategy: Dict, design_name: str) -> str:
         """生成Docker模式的OpenROAD脚本"""
-        utilization = layout_strategy.get('parameters', {}).get('utilization', 0.7)
-        aspect_ratio = layout_strategy.get('parameters', {}).get('aspect_ratio', 1.0)
+        params = layout_strategy.get('parameters', {})
+        utilization = params.get('utilization', 0.7)
+        aspect_ratio = params.get('aspect_ratio', 1.0)
+        placement_density = params.get('placement_density', 0.7)
+        overflow_threshold = params.get('overflow_threshold', 0.15)
+        
+        strategy_type = layout_strategy.get('strategy_type', 'basic')
+        llm_reasoning = layout_strategy.get('llm_reasoning', '')
         
         return f"""
 # === Docker模式OpenROAD布局脚本 ===
 puts "=== Docker模式OpenROAD布局脚本 ==="
+puts "设计名称: {design_name}"
+puts "策略类型: {strategy_type}"
 puts "当前工作目录: [pwd]"
+
+# 显示LLM分析信息
+puts "=== ChipDRAG智能布局策略 ==="
+puts "利用率: {utilization:.3f}"
+puts "长宽比: {aspect_ratio:.3f}"
+puts "布局密度: {placement_density:.3f}"
+puts "溢出阈值: {overflow_threshold:.3f}"
+{"puts \"LLM分析理由: " + llm_reasoning.replace('"', '\\"') + "\"" if llm_reasoning else ""}
 
 # 设置线程数
 if {{[info exists ::env(OPENROAD_NUM_THREADS)]}} {{
@@ -1032,17 +1075,40 @@ read_verilog design.v
 puts "读取DEF文件: floorplan.def"
 read_def floorplan.def
 
-# 初始化布局
+# 初始化布局（使用LLM优化的参数）
 puts "初始化floorplan..."
-initialize_floorplan -utilization {utilization} -aspect_ratio {aspect_ratio} -core_space 20
+if {{[catch {{
+    initialize_floorplan -utilization {utilization} -aspect_ratio {aspect_ratio} -core_space 30
+}} err]}} {{
+    puts "❌ 初始化失败: $err"
+    # 尝试更保守的参数
+    puts "尝试更保守的初始化参数..."
+    initialize_floorplan -utilization {max(0.5, utilization-0.1)} -aspect_ratio {aspect_ratio} -core_space 50
+}}
 
-# 全局布局
+# 全局布局（使用LLM优化的参数）
 puts "执行全局布局..."
-global_placement -density 0.8 -overflow 0.1
+puts "使用智能参数 - 密度: {placement_density:.3f}, 溢出: {overflow_threshold:.3f}"
+if {{[catch {{
+    global_placement -density {placement_density} -overflow {overflow_threshold}
+}} err]}} {{
+    puts "❌ 全局布局失败: $err"
+    # 尝试更保守的参数
+    set fallback_density [expr {{{placement_density}}} * 0.85]
+    set fallback_overflow [expr {{{overflow_threshold}}} * 1.3]
+    puts "尝试更保守的全局布局参数: 密度$fallback_density, 溢出$fallback_overflow"
+    global_placement -density $fallback_density -overflow $fallback_overflow
+}}
 
-# 详细布局
+# 详细布局（增强容错性）
 puts "执行详细布局..."
-detailed_placement -max_displacement 100
+if {{[catch {{
+    detailed_placement -max_displacement 150 -disallow_one_site_gaps
+}} err]}} {{
+    puts "❌ 详细布局失败: $err"
+    puts "尝试更宽松的详细布局参数..."
+    detailed_placement -max_displacement 200
+}}
 
 # 输出结果
 puts "写入布局结果..."
@@ -1053,14 +1119,30 @@ puts "=== 布局完成 ==="
     
     def _generate_openroad_script_server(self, layout_strategy: Dict, design_name: str) -> str:
         """生成服务器模式的OpenROAD脚本"""
-        utilization = layout_strategy.get('parameters', {}).get('utilization', 0.7)
-        aspect_ratio = layout_strategy.get('parameters', {}).get('aspect_ratio', 1.0)
+        params = layout_strategy.get('parameters', {})
+        utilization = params.get('utilization', 0.7)
+        aspect_ratio = params.get('aspect_ratio', 1.0)
+        placement_density = params.get('placement_density', 0.7)
+        overflow_threshold = params.get('overflow_threshold', 0.15)
         threads = getattr(self, 'openroad_threads', 4)
+        
+        strategy_type = layout_strategy.get('strategy_type', 'basic')
+        llm_reasoning = layout_strategy.get('llm_reasoning', '')
         
         return f"""
 # === 服务器模式OpenROAD布局脚本 ===
 puts "=== 服务器模式OpenROAD布局脚本 ==="
+puts "设计名称: {design_name}"
+puts "策略类型: {strategy_type}"
 puts "当前工作目录: [pwd]"
+
+# 显示LLM分析信息
+puts "=== ChipDRAG智能布局策略 ==="
+puts "利用率: {utilization:.3f}"
+puts "长宽比: {aspect_ratio:.3f}"
+puts "布局密度: {placement_density:.3f}"
+puts "溢出阈值: {overflow_threshold:.3f}"
+{"puts \"LLM分析理由: " + llm_reasoning.replace('"', '\\"') + "\"" if llm_reasoning else ""}
 
 # 设置线程数
 set_thread_count {threads}
@@ -1086,17 +1168,17 @@ read_verilog design.v
 puts "读取DEF文件: floorplan.def"
 read_def floorplan.def
 
-# 初始化布局
+# 初始化布局（更保守的参数）
 puts "初始化floorplan..."
 if {{[catch {{
-    initialize_floorplan -utilization {utilization} -aspect_ratio {aspect_ratio} -core_space 20
+    initialize_floorplan -utilization {max(0.6, utilization-0.1)} -aspect_ratio {aspect_ratio} -core_space 30
 }} err]}} {{
     puts "❌ 初始化失败: $err"
-    # 尝试使用不同的site名称
+    # 尝试使用不同的site名称和更低的利用率
     set site_candidates [list "core" "CoreSite" "unit" "CORE"]
     foreach site $site_candidates {{
         if {{![catch {{
-            initialize_floorplan -utilization {utilization} -aspect_ratio {aspect_ratio} -core_space 20 -site $site
+            initialize_floorplan -utilization 0.5 -aspect_ratio {aspect_ratio} -core_space 50 -site $site
         }}]}} {{
             puts "✅ 使用site $site 初始化成功"
             break
@@ -1104,13 +1186,35 @@ if {{[catch {{
     }}
 }}
 
-# 全局布局
+# 全局布局（使用LLM优化的参数）
 puts "执行全局布局..."
-global_placement -density 0.8 -overflow 0.1
+puts "使用智能参数 - 密度: {placement_density:.3f}, 溢出: {overflow_threshold:.3f}"
+if {{[catch {{
+    global_placement -density {placement_density} -overflow {overflow_threshold}
+}} err]}} {{
+    puts "❌ 全局布局失败: $err"
+    # 尝试更保守的参数
+    set fallback_density [expr {{{placement_density}}} * 0.85]
+    set fallback_overflow [expr {{{overflow_threshold}}} * 1.3]
+    puts "尝试更保守的全局布局参数: 密度$fallback_density, 溢出$fallback_overflow"
+    global_placement -density $fallback_density -overflow $fallback_overflow
+}}
 
-# 详细布局
+# 详细布局（增强容错性）
 puts "执行详细布局..."
-detailed_placement -max_displacement 100
+if {{[catch {{
+    detailed_placement -max_displacement 150 -disallow_one_site_gaps
+}} err]}} {{
+    puts "❌ 详细布局失败: $err"
+    puts "尝试更宽松的详细布局参数..."
+    if {{[catch {{
+        detailed_placement -max_displacement 200
+    }} err2]}} {{
+        puts "❌ 详细布局仍然失败: $err2"
+        # 尝试仅使用全局布局结果
+        puts "使用全局布局结果作为最终结果..."
+    }}
+}}
 
 # 输出结果
 puts "写入布局结果..."
@@ -1292,12 +1396,12 @@ puts "=== 布局完成 ==="
             raise ValueError(f"无法从真实约束文件提取信息: {e}")
     
     def _generate_layout_strategy(self, retrieved_cases: List, action: Dict) -> Dict[str, Any]:
-        """生成布局策略 - 基于检索案例和RL动作"""
+        """生成布局策略 - 基于检索案例和RL动作，使用LLM智能分析"""
         if not retrieved_cases:
             logger.error("论文实验要求：布局策略必须基于检索案例")
             raise ValueError("缺少检索案例，无法生成布局策略")
         
-        # 从检索案例中提取策略参数
+        # 1. 先进行基础的数值分析（作为fallback）
         strategy_params = {}
         utilization_values = []
         aspect_ratio_values = []
@@ -1322,22 +1426,135 @@ puts "=== 布局完成 ==="
                             aspect_ratio_values.append(val)
                         break
         
-        # 基于检索案例计算策略参数
+        # 基础计算
         if utilization_values:
-            strategy_params['utilization'] = min(0.9, max(0.5, np.mean(utilization_values)))
+            base_utilization = min(0.9, max(0.5, np.mean(utilization_values)))
         else:
-            strategy_params['utilization'] = 0.7  # 保守值
+            base_utilization = 0.7
         
         if aspect_ratio_values:
-            strategy_params['aspect_ratio'] = min(2.0, max(0.5, np.mean(aspect_ratio_values)))
+            base_aspect_ratio = min(2.0, max(0.5, np.mean(aspect_ratio_values)))
         else:
-            strategy_params['aspect_ratio'] = 1.0  # 正方形
+            base_aspect_ratio = 1.0
+        
+        # 2. 使用LLM进行智能策略分析和优化
+        try:
+            logger.info("使用LLM分析检索案例并生成智能布局策略...")
+            
+            # 构建LLM分析提示
+            action_info = {
+                'k_value': getattr(action, 'k_value', action.get('k_value', 8) if isinstance(action, dict) else 8),
+                'confidence': getattr(action, 'confidence', action.get('confidence', 0.8) if isinstance(action, dict) else 0.8),
+                'exploration_type': getattr(action, 'exploration_type', action.get('exploration_type', 'balanced') if isinstance(action, dict) else 'balanced')
+            }
+            
+            cases_summary = []
+            for i, case in enumerate(retrieved_cases[:5]):  # 只分析前5个最相关的案例
+                case_summary = {
+                    'id': case.get('id', f'case_{i}'),
+                    'design_type': case.get('design_type', 'unknown'),
+                    'source': case.get('source', 'unknown'),
+                    'features': case.get('features', {}),
+                    'performance_metrics': case.get('performance_metrics', {})
+                }
+                cases_summary.append(case_summary)
+            
+            prompt = f"""
+作为ChipDRAG系统的布局策略专家，请基于以下信息生成优化的布局策略：
+
+检索到的相关案例：
+{json.dumps(cases_summary, indent=2, ensure_ascii=False)}
+
+RL智能体选择的动作：
+{json.dumps(action_info, indent=2, ensure_ascii=False)}
+
+基础分析结果：
+- 基础利用率: {base_utilization:.3f}
+- 基础长宽比: {base_aspect_ratio:.3f}
+
+请分析这些案例的成功经验，结合RL动作建议，生成一个优化的布局策略。
+
+返回JSON格式，包含：
+1. utilization: 优化的芯片利用率 (0.5-0.9)
+2. aspect_ratio: 优化的长宽比 (0.5-2.0)
+3. placement_density: 布局密度 (0.6-0.8)
+4. overflow_threshold: 溢出阈值 (0.1-0.2)
+5. reasoning: 策略选择的详细理由
+
+示例格式：
+{{
+    "utilization": 0.75,
+    "aspect_ratio": 1.2,
+    "placement_density": 0.7,
+    "overflow_threshold": 0.15,
+    "reasoning": "基于案例分析的详细理由..."
+}}
+"""
+            
+            # 调用LLM
+            llm_response = self.llm_manager.generate(prompt)
+            
+            # 解析LLM响应
+            if llm_response and isinstance(llm_response, str):
+                # 尝试提取JSON
+                import re
+                json_match = re.search(r'\{.*\}', llm_response, re.DOTALL)
+                if json_match:
+                    llm_strategy = json.loads(json_match.group())
+                    
+                    # 验证和调整LLM输出
+                    strategy_params = {
+                        'utilization': max(0.5, min(0.9, llm_strategy.get('utilization', base_utilization))),
+                        'aspect_ratio': max(0.5, min(2.0, llm_strategy.get('aspect_ratio', base_aspect_ratio))),
+                        'placement_density': max(0.6, min(0.8, llm_strategy.get('placement_density', 0.7))),
+                        'overflow_threshold': max(0.1, min(0.2, llm_strategy.get('overflow_threshold', 0.15)))
+                    }
+                    
+                    logger.info(f"✅ LLM生成了智能布局策略: {strategy_params}")
+                    logger.info(f"LLM分析理由: {llm_strategy.get('reasoning', 'N/A')}")
+                    
+                    return {
+                        'strategy_type': 'llm_optimized',
+                        'parameters': strategy_params,
+                        'source': 'llm_analysis_with_retrieved_cases',
+                        'case_count': len(retrieved_cases),
+                        'llm_reasoning': llm_strategy.get('reasoning', ''),
+                        'action_info': action_info
+                    }
+                    
+        except Exception as e:
+            logger.warning(f"LLM策略生成失败，使用基础策略: {e}")
+        
+        # 3. 如果LLM失败，使用基础策略（但有RL优化）
+        logger.info("使用基础策略（带RL优化）")
+        
+        # 基于RL动作调整参数
+        k_value = action_info['k_value']
+        confidence = action_info['confidence']
+        
+        # 根据k值和置信度调整策略
+        if k_value > 10:  # 高k值，更保守的策略
+            base_utilization *= 0.9
+            base_aspect_ratio = min(1.5, base_aspect_ratio)
+        elif k_value < 5:  # 低k值，更积极的策略
+            base_utilization = min(0.85, base_utilization * 1.1)
+        
+        if confidence < 0.5:  # 低置信度，更保守
+            base_utilization *= 0.85
+        
+        strategy_params = {
+            'utilization': base_utilization,
+            'aspect_ratio': base_aspect_ratio,
+            'placement_density': 0.7,
+            'overflow_threshold': 0.15
+        }
         
         return {
-            'strategy_type': 'optimized',
+            'strategy_type': 'rl_optimized',
             'parameters': strategy_params,
             'source': 'retrieved_cases_and_rl_action',
-            'case_count': len(retrieved_cases)
+            'case_count': len(retrieved_cases),
+            'action_info': action_info
         }
     
     def _execute_layout_and_calculate_reward(self, design_dir: Path, layout_strategy: Dict) -> float:
@@ -2114,6 +2331,655 @@ puts "=== 布局完成 ==="
                 f.write(f"| {contribution} | {importance['performance_degradation']:.3f} | "
                        f"{importance['degradation_percentage']:.1f}% |\n")
 
+    # ===== 整合功能1: 性能监控 =====
+    def start_performance_monitoring(self, monitor_interval: int = 5):
+        """启动性能监控"""
+        if self.monitoring_enabled:
+            return
+        
+        self.performance_monitor = PerformanceMonitor(monitor_interval)
+        self.monitoring_enabled = True
+        logger.info("✅ 性能监控已启动")
+    
+    def stop_performance_monitoring(self) -> Dict[str, Any]:
+        """停止性能监控并返回报告"""
+        if not self.monitoring_enabled or not self.performance_monitor:
+            return {}
+        
+        report = self.performance_monitor.stop_monitoring()
+        self.monitoring_enabled = False
+        logger.info("✅ 性能监控已停止")
+        return report
+    
+    # ===== 整合功能2: 训练案例提取 =====
+    def extract_training_cases(self) -> List[Dict[str, Any]]:
+        """从训练结果中提取真实案例来充实知识库"""
+        logger.info("🚀 开始提取训练案例...")
+        
+        # 确保输出目录存在
+        output_dir = self.case_extractor_config['output_dir']
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 预加载真实设计特征
+        self._load_real_design_features_cache()
+        
+        all_cases = []
+        
+        # 从HPWL结果提取案例
+        hpwl_cases = self._extract_hpwl_cases()
+        all_cases.extend(hpwl_cases)
+        
+        # 从DEF文件提取案例
+        def_cases = self._extract_def_cases()
+        all_cases.extend(def_cases)
+        
+        # 合并现有案例
+        merged_cases = self._merge_existing_cases(all_cases)
+        
+        # 保存案例
+        self._save_training_cases(merged_cases)
+        
+        logger.info(f"✅ 训练案例提取完成，共提取 {len(merged_cases)} 个案例")
+        return merged_cases
+    
+    def _load_real_design_features_cache(self):
+        """预加载真实设计特征缓存"""
+        logger.info("预加载真实设计特征...")
+        
+        cache = {}
+        if not self.data_dir.exists():
+            logger.warning(f"数据目录不存在: {self.data_dir}")
+            return cache
+        
+        for design_dir in self.data_dir.iterdir():
+            if not design_dir.is_dir():
+                continue
+            
+            design_name = design_dir.name
+            def_files = list(design_dir.glob("*.def"))
+            
+            if def_files:
+                features = self._extract_real_features_from_def_for_cases(def_files[0])
+                if features:
+                    cache[design_name] = features
+                    logger.debug(f"加载真实特征: {design_name}")
+        
+        self.case_extractor_config['real_features_cache'] = cache
+        logger.info(f"预加载完成，共 {len(cache)} 个设计的真实特征")
+    
+    def _extract_real_features_from_def_for_cases(self, def_file: Path) -> Dict[str, Any]:
+        """从DEF文件中提取真实特征（用于案例提取）"""
+        try:
+            with open(def_file, 'r') as f:
+                content = f.read()
+            
+            features = {}
+            
+            # 提取设计名称
+            design_match = re.search(r'DESIGN\s+(\w+)', content)
+            if design_match:
+                features['design_name'] = design_match.group(1)
+            
+            # 提取芯片尺寸
+            diearea_match = re.search(r'DIEAREA\s+\(\s*(\d+)\s+(\d+)\s*\)\s+\(\s*(\d+)\s+(\d+)\s*\)', content)
+            if diearea_match:
+                x1, y1, x2, y2 = map(int, diearea_match.groups())
+                features['die_area'] = (x2 - x1) * (y2 - y1)
+                features['die_width'] = x2 - x1
+                features['die_height'] = y2 - y1
+                features['aspect_ratio'] = (x2 - x1) / max(y2 - y1, 1)
+            
+            # 提取组件和网络数量
+            components_match = re.search(r'COMPONENTS\s+(\d+)', content)
+            if components_match:
+                features['num_components'] = int(components_match.group(1))
+            
+            nets_match = re.search(r'NETS\s+(\d+)', content)
+            if nets_match:
+                features['num_nets'] = int(nets_match.group(1))
+            
+            pins_match = re.search(r'PINS\s+(\d+)', content)
+            if pins_match:
+                features['num_pins'] = int(pins_match.group(1))
+            
+            # 计算设计特征
+            if 'num_components' in features and 'die_area' in features and features['die_area'] > 0:
+                features['component_density'] = features['num_components'] / features['die_area']
+            
+            if 'num_components' in features and 'num_nets' in features:
+                features['design_complexity'] = (features['num_components'] + features['num_nets']) / 10000
+            
+            # 推断设计类型
+            design_name = features.get('design_name', '').lower()
+            if 'fft' in design_name:
+                features['design_type'] = 'signal_processing'
+            elif 'matrix' in design_name:
+                features['design_type'] = 'computation'
+            elif 'des' in design_name:
+                features['design_type'] = 'cryptography'
+            elif 'pci' in design_name:
+                features['design_type'] = 'interface'
+            else:
+                features['design_type'] = 'general'
+            
+            return features
+            
+        except Exception as e:
+            logger.error(f"解析DEF文件失败 {def_file}: {e}")
+            return {}
+    
+    def _extract_hpwl_cases(self) -> List[Dict[str, Any]]:
+        """从HPWL结果中提取案例"""
+        logger.info("从HPWL结果中提取案例...")
+        
+        cases = []
+        hpwl_file = self.base_dir / "hpwl_comparison_results.json"
+        
+        if not hpwl_file.exists():
+            logger.warning(f"HPWL结果文件不存在: {hpwl_file}")
+            return cases
+        
+        try:
+            with open(hpwl_file, 'r') as f:
+                data = json.load(f)
+            
+            for design_name, design_data in data.items():
+                if design_name == "detailed_records":
+                    continue
+                
+                if isinstance(design_data, dict) and "default_hpwl" in design_data:
+                    case = self._create_case_from_hpwl_data(design_name, design_data)
+                    if case:
+                        cases.append(case)
+                        
+        except Exception as e:
+            logger.error(f"提取HPWL案例失败: {e}")
+        
+        logger.info(f"从HPWL结果提取了 {len(cases)} 个案例")
+        return cases
+    
+    def _create_case_from_hpwl_data(self, design_name: str, design_data: Dict) -> Optional[Dict]:
+        """从HPWL数据创建案例"""
+        try:
+            # 获取真实设计特征
+            cache = self.case_extractor_config['real_features_cache']
+            if design_name not in cache:
+                logger.warning(f"跳过HPWL案例 {design_name}: 未找到真实特征")
+                return None
+            
+            real_features = cache[design_name]
+            
+            # 计算性能指标
+            default_hpwl = design_data.get("default_hpwl", 0)
+            optimized_hpwl = design_data.get("optimized_hpwl", 0)
+            
+            improvement_pct = 0
+            if default_hpwl > 0:
+                improvement_pct = (default_hpwl - optimized_hpwl) / default_hpwl * 100
+            
+            case = {
+                'id': f"hpwl_{design_name}",
+                'name': design_name,
+                'design_type': real_features.get('design_type', 'general'),
+                'source': 'hpwl_training',
+                'features': {
+                    'components': real_features.get('num_components', 0),
+                    'nets': real_features.get('num_nets', 0),
+                    'pins': real_features.get('num_pins', 0),
+                    'area': real_features.get('die_area', 0),
+                    'aspect_ratio': real_features.get('aspect_ratio', 1.0),
+                    'design_type': real_features.get('design_type', 'general')
+                },
+                'performance_metrics': {
+                    'default_hpwl': default_hpwl,
+                    'optimized_hpwl': optimized_hpwl,
+                    'improvement_pct': improvement_pct
+                },
+                'metadata': {
+                    'source': 'hpwl_training',
+                    'timestamp': datetime.now().isoformat(),
+                    'version': '1.0'
+                }
+            }
+            
+            return case
+            
+        except Exception as e:
+            logger.error(f"创建HPWL案例失败 {design_name}: {e}")
+            return None
+    
+    def _extract_def_cases(self) -> List[Dict[str, Any]]:
+        """从DEF文件提取案例"""
+        logger.info("从DEF文件提取案例...")
+        
+        cases = []
+        cache = self.case_extractor_config['real_features_cache']
+        
+        for design_name, features in cache.items():
+            case = {
+                'id': f"def_{design_name}",
+                'name': design_name,
+                'design_type': features.get('design_type', 'general'),
+                'source': 'def_extraction',
+                'features': {
+                    'components': features.get('num_components', 0),
+                    'nets': features.get('num_nets', 0),
+                    'pins': features.get('num_pins', 0),
+                    'area': features.get('die_area', 0),
+                    'aspect_ratio': features.get('aspect_ratio', 1.0),
+                    'design_type': features.get('design_type', 'general')
+                },
+                'metadata': {
+                    'source': 'def_extraction',
+                    'timestamp': datetime.now().isoformat(),
+                    'version': '1.0'
+                }
+            }
+            cases.append(case)
+        
+        logger.info(f"从DEF文件提取了 {len(cases)} 个案例")
+        return cases
+    
+    def _merge_existing_cases(self, new_cases: List[Dict]) -> List[Dict]:
+        """合并现有案例"""
+        logger.info("合并现有案例...")
+        
+        output_dir = self.case_extractor_config['output_dir']
+        cases_file = output_dir / "cases.pkl"
+        
+        existing_cases = []
+        if cases_file.exists():
+            try:
+                with open(cases_file, 'rb') as f:
+                    existing_cases = pickle.load(f)
+                logger.info(f"加载了 {len(existing_cases)} 个现有案例")
+            except Exception as e:
+                logger.warning(f"加载现有案例失败: {e}")
+        
+        # 去重合并
+        all_cases = existing_cases.copy()
+        existing_ids = {case.get('id', case.get('name', '')) for case in existing_cases}
+        
+        for case in new_cases:
+            case_id = case.get('id', case.get('name', ''))
+            if case_id not in existing_ids:
+                all_cases.append(case)
+                existing_ids.add(case_id)
+        
+        logger.info(f"合并后总共 {len(all_cases)} 个案例")
+        return all_cases
+    
+    def _save_training_cases(self, cases: List[Dict]):
+        """保存训练案例"""
+        logger.info(f"保存 {len(cases)} 个训练案例...")
+        
+        output_dir = self.case_extractor_config['output_dir']
+        
+        # 保存为pickle格式
+        cases_file = output_dir / "cases.pkl"
+        with open(cases_file, 'wb') as f:
+            pickle.dump(cases, f)
+        
+        # 保存为JSON格式
+        json_file = output_dir / "cases.json"
+        with open(json_file, 'w') as f:
+            json.dump(cases, f, indent=2, default=str)
+        
+        logger.info(f"训练案例已保存到: {cases_file} 和 {json_file}")
+    
+    # ===== 整合功能3: 案例相似度改进 =====
+    def improve_case_similarity(self) -> List[Dict[str, Any]]:
+        """改进案例相似度 - 从真实DEF/LEF文件中提取准确特征"""
+        logger.info("🎯 开始改进案例相似度...")
+        
+        # 1. 提取真实特征
+        real_cases = self._extract_real_features_for_similarity()
+        
+        if not real_cases:
+            logger.error("❌ 未能提取到真实特征")
+            return []
+        
+        # 2. 改进相似度计算
+        improved_cases = self._improve_similarity_calculation(real_cases)
+        
+        # 3. 保存改进的案例
+        self._save_improved_cases(improved_cases)
+        
+        logger.info("✅ 案例相似度改进完成！")
+        return improved_cases
+    
+    def _extract_real_features_for_similarity(self) -> List[Dict[str, Any]]:
+        """提取用于相似度改进的真实特征"""
+        logger.info("提取真实特征用于相似度改进...")
+        
+        real_cases = []
+        
+        if not self.data_dir.exists():
+            logger.error(f"数据目录不存在: {self.data_dir}")
+            return real_cases
+        
+        for design_dir in self.data_dir.iterdir():
+            if not design_dir.is_dir():
+                continue
+            
+            design_name = design_dir.name
+            def_files = list(design_dir.glob("*.def"))
+            
+            if def_files:
+                features = self._extract_real_features_from_def_for_cases(def_files[0])
+                if features:
+                    case = self._create_case_from_real_features(features, def_files[0])
+                    if case:
+                        real_cases.append(case)
+        
+        logger.info(f"提取了 {len(real_cases)} 个真实案例")
+        return real_cases
+    
+    def _create_case_from_real_features(self, features: Dict[str, Any], def_file: Path) -> Optional[Dict[str, Any]]:
+        """从真实特征创建案例"""
+        try:
+            case = {
+                'id': f"real_{features.get('design_name', 'unknown')}",
+                'name': features.get('design_name', 'unknown'),
+                'design_type': features.get('design_type', 'general'),
+                'source': 'real_def_extraction',
+                'features': {
+                    'components': features.get('num_components', 0),
+                    'nets': features.get('num_nets', 0),
+                    'pins': features.get('num_pins', 0),
+                    'area': features.get('die_area', 0),
+                    'aspect_ratio': features.get('aspect_ratio', 1.0),
+                    'design_type': features.get('design_type', 'general')
+                },
+                'metadata': {
+                    'source': 'real_def_extraction',
+                    'timestamp': datetime.now().isoformat(),
+                    'version': '2.0',
+                    'def_file': str(def_file)
+                }
+            }
+            
+            return case
+            
+        except Exception as e:
+            logger.error(f"创建真实案例失败: {e}")
+            return None
+    
+    def _improve_similarity_calculation(self, cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """改进相似度计算"""
+        logger.info("改进相似度计算...")
+        
+        # 为每个案例添加相似度向量
+        for case in cases:
+            features = case.get('features', {})
+            
+            similarity_vector = {
+                'scale_factor': self._normalize_scale(features.get('components', 0)),
+                'complexity_factor': self._normalize_complexity(features.get('design_complexity', 0)),
+                'type_factor': self._encode_design_type(features.get('design_type', 'general')),
+                'aspect_ratio_factor': self._normalize_aspect_ratio(features.get('aspect_ratio', 1.0))
+            }
+            
+            case['similarity_vector'] = similarity_vector
+        
+        # 计算案例间的相似度矩阵
+        similarity_matrix = self._calculate_similarity_matrix(cases)
+        
+        # 添加相似度信息
+        for i, case in enumerate(cases):
+            if i < len(similarity_matrix):
+                case['similarity_scores'] = {
+                    'max_similarity': max(similarity_matrix[i]) if similarity_matrix[i] else 0,
+                    'avg_similarity': sum(similarity_matrix[i]) / len(similarity_matrix[i]) if similarity_matrix[i] else 0,
+                    'similar_cases': [j for j, score in enumerate(similarity_matrix[i]) if score > 0.7]
+                }
+        
+        logger.info("相似度计算完成")
+        return cases
+    
+    def _normalize_scale(self, components: int) -> float:
+        """标准化设计规模"""
+        if components < 5000:
+            return 0.2
+        elif components < 15000:
+            return 0.4
+        elif components < 30000:
+            return 0.6
+        elif components < 50000:
+            return 0.8
+        else:
+            return 1.0
+    
+    def _normalize_complexity(self, complexity: float) -> float:
+        """标准化设计复杂度"""
+        return min(1.0, complexity / 10.0)
+    
+    def _encode_design_type(self, design_type: str) -> float:
+        """编码设计类型"""
+        type_map = {
+            'signal_processing': 0.2,
+            'computation': 0.4,
+            'cryptography': 0.6,
+            'interface': 0.8,
+            'general': 0.5
+        }
+        return type_map.get(design_type, 0.5)
+    
+    def _normalize_aspect_ratio(self, aspect_ratio: float) -> float:
+        """标准化长宽比"""
+        return 1.0 - min(1.0, abs(aspect_ratio - 1.0) / 2.0)
+    
+    def _calculate_similarity_matrix(self, cases: List[Dict[str, Any]]) -> List[List[float]]:
+        """计算相似度矩阵"""
+        n = len(cases)
+        matrix = [[0.0] * n for _ in range(n)]
+        
+        for i in range(n):
+            for j in range(n):
+                if i != j:
+                    similarity = self._calculate_case_similarity(cases[i], cases[j])
+                    matrix[i][j] = similarity
+                else:
+                    matrix[i][j] = 1.0
+        
+        return matrix
+    
+    def _calculate_case_similarity(self, case1: Dict[str, Any], case2: Dict[str, Any]) -> float:
+        """计算两个案例的相似度"""
+        vec1 = case1.get('similarity_vector', {})
+        vec2 = case2.get('similarity_vector', {})
+        
+        if not vec1 or not vec2:
+            return 0.0
+        
+        # 加权欧氏距离
+        weights = {
+            'scale_factor': 0.3,
+            'complexity_factor': 0.3,
+            'type_factor': 0.2,
+            'aspect_ratio_factor': 0.2
+        }
+        
+        total_distance = 0.0
+        total_weight = 0.0
+        
+        for key, weight in weights.items():
+            if key in vec1 and key in vec2:
+                distance = abs(vec1[key] - vec2[key])
+                total_distance += distance * weight
+                total_weight += weight
+        
+        if total_weight == 0:
+            return 0.0
+        
+        similarity = 1.0 - (total_distance / total_weight)
+        return max(0.0, similarity)
+    
+    def _save_improved_cases(self, cases: List[Dict[str, Any]]):
+        """保存改进的案例"""
+        logger.info("保存改进的案例...")
+        
+        output_dir = self.case_extractor_config['output_dir']
+        
+        # 保存为pickle格式
+        cases_file = output_dir / "improved_cases.pkl"
+        with open(cases_file, 'wb') as f:
+            pickle.dump(cases, f)
+        
+        # 保存为JSON格式
+        json_file = output_dir / "improved_cases.json"
+        with open(json_file, 'w') as f:
+            json.dump(cases, f, indent=2, default=str)
+        
+        # 生成相似度报告
+        self._generate_similarity_report(cases)
+        
+        logger.info(f"改进案例已保存到: {cases_file} 和 {json_file}")
+    
+    def _generate_similarity_report(self, cases: List[Dict[str, Any]]):
+        """生成相似度报告"""
+        logger.info("生成相似度报告...")
+        
+        output_dir = self.case_extractor_config['output_dir']
+        
+        report = {
+            'timestamp': datetime.now().isoformat(),
+            'total_cases': len(cases),
+            'high_similarity_pairs': [],
+            'low_similarity_cases': []
+        }
+        
+        for case in cases:
+            similarity_scores = case.get('similarity_scores', {})
+            max_sim = similarity_scores.get('max_similarity', 0)
+            
+            if max_sim > 0.7:
+                report['high_similarity_pairs'].append({
+                    'case': case.get('name', 'unknown'),
+                    'max_similarity': max_sim,
+                    'similar_cases_count': len(similarity_scores.get('similar_cases', []))
+                })
+            elif max_sim < 0.3:
+                report['low_similarity_cases'].append({
+                    'case': case.get('name', 'unknown'),
+                    'max_similarity': max_sim,
+                    'design_type': case.get('design_type', 'unknown')
+                })
+        
+        # 保存报告
+        report_file = output_dir / "similarity_report.json"
+        with open(report_file, 'w') as f:
+            json.dump(report, f, indent=2, default=str)
+        
+        logger.info(f"相似度报告已保存: {report_file}")
+        
+        # 输出关键统计
+        high_sim_count = len(report['high_similarity_pairs'])
+        low_sim_count = len(report['low_similarity_cases'])
+        
+        logger.info(f"📈 相似度分析结果:")
+        logger.info(f"   - 高相似度案例对 (>0.7): {high_sim_count}")
+        logger.info(f"   - 低相似度案例 (<0.3): {low_sim_count}")
+
+
+class PerformanceMonitor:
+    """性能监控器"""
+    
+    def __init__(self, monitor_interval: int = 5):
+        self.monitor_interval = monitor_interval
+        self.monitoring = False
+        self.monitor_thread = None
+        self.performance_data = []
+        self.start_time = None
+    
+    def start_monitoring(self):
+        """开始监控"""
+        if self.monitoring:
+            return
+        
+        self.monitoring = True
+        self.start_time = datetime.now()
+        self.monitor_thread = threading.Thread(target=self._monitor_loop)
+        self.monitor_thread.daemon = True
+        self.monitor_thread.start()
+        logger.info(f"性能监控已启动，监控间隔: {self.monitor_interval}秒")
+    
+    def stop_monitoring(self):
+        """停止监控"""
+        if not self.monitoring:
+            return {}
+        
+        self.monitoring = False
+        if self.monitor_thread:
+            self.monitor_thread.join(timeout=5)
+        
+        logger.info("性能监控已停止")
+        return self._generate_performance_report()
+    
+    def _monitor_loop(self):
+        """监控循环"""
+        while self.monitoring:
+            try:
+                # 获取系统资源信息
+                cpu_percent = psutil.cpu_percent(interval=1)
+                memory = psutil.virtual_memory()
+                
+                # 统计OpenROAD进程
+                openroad_count = 0
+                for proc in psutil.process_iter(['name']):
+                    try:
+                        if 'openroad' in proc.info['name'].lower():
+                            openroad_count += 1
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+                
+                # 记录性能数据
+                data_point = {
+                    'timestamp': datetime.now().isoformat(),
+                    'cpu_percent': cpu_percent,
+                    'memory_percent': memory.percent,
+                    'openroad_processes': openroad_count
+                }
+                
+                self.performance_data.append(data_point)
+                
+                # 实时输出
+                logger.info(f"⏰ {datetime.now().strftime('%H:%M:%S')} | "
+                           f"CPU: {cpu_percent:.1f}% | "
+                           f"内存: {memory.percent:.1f}% | "
+                           f"OpenROAD进程: {openroad_count}")
+                
+                time.sleep(self.monitor_interval)
+                
+            except Exception as e:
+                logger.error(f"监控异常: {e}")
+                break
+    
+    def _generate_performance_report(self) -> Dict[str, Any]:
+        """生成性能报告"""
+        if not self.performance_data:
+            return {}
+        
+        cpu_values = [d['cpu_percent'] for d in self.performance_data]
+        memory_values = [d['memory_percent'] for d in self.performance_data]
+        
+        report = {
+            'monitoring_duration': str(datetime.now() - self.start_time) if self.start_time else "0",
+            'total_data_points': len(self.performance_data),
+            'cpu_utilization': {
+                'average': sum(cpu_values) / len(cpu_values),
+                'max': max(cpu_values),
+                'min': min(cpu_values)
+            },
+            'memory_utilization': {
+                'average': sum(memory_values) / len(memory_values),
+                'max': max(memory_values),
+                'min': min(memory_values)
+            }
+        }
+        
+        return report
+
 
 def main():
     """主函数"""
@@ -2121,14 +2987,23 @@ def main():
     parser = argparse.ArgumentParser(description='统一版论文实验脚本')
     parser.add_argument('--mode', choices=['local', 'server'], default='local',
                         help='执行模式：local（本地Docker）或server（服务器直接执行）')
-    parser.add_argument('--experiment-type', choices=['hpwl', 'ablation'], default='hpwl',
-                        help='实验类型：hpwl（HPWL对比实验）或ablation（消融实验）')
+    parser.add_argument('--experiment-type', choices=['hpwl', 'ablation', 'extract-cases', 'improve-similarity'], default='hpwl',
+                        help='实验类型：hpwl（HPWL对比实验）、ablation（消融实验）、extract-cases（提取训练案例）、improve-similarity（改进案例相似度）')
+    parser.add_argument('--enable-monitoring', action='store_true', default=False,
+                        help='启用性能监控')
+    parser.add_argument('--monitor-interval', type=int, default=5,
+                        help='性能监控间隔（秒）')
     
     args = parser.parse_args()
     
     try:
         # 创建实验实例
         experiment = UnifiedPaperExperiment(mode=args.mode)
+        
+        # 启用性能监控（如果需要）
+        if args.enable_monitoring:
+            experiment.start_performance_monitoring(args.monitor_interval)
+            logger.info(f"✅ 性能监控已启用，监控间隔: {args.monitor_interval}秒")
         
         # 根据实验类型运行不同的实验
         if args.experiment_type == 'hpwl':
@@ -2162,6 +3037,56 @@ def main():
                 for exp_type, perf in report['performance_comparison'].items():
                     print(f"  {exp_type}: 平均奖励 {perf['avg_reward']:.3f}")
             print("="*60)
+            
+        elif args.experiment_type == 'extract-cases':
+            logger.info(f"开始提取训练案例...")
+            cases = experiment.extract_training_cases()
+            
+            # 输出案例提取结果
+            print("\n" + "="*60)
+            print("训练案例提取完成")
+            print(f"提取的案例数: {len(cases)}")
+            print("案例来源:")
+            case_sources = {}
+            for case in cases:
+                source = case.get('source', 'unknown')
+                case_sources[source] = case_sources.get(source, 0) + 1
+            for source, count in case_sources.items():
+                print(f"  • {source}: {count}个案例")
+            print("="*60)
+            
+        elif args.experiment_type == 'improve-similarity':
+            logger.info(f"开始改进案例相似度...")
+            improved_cases = experiment.improve_case_similarity()
+            
+            # 输出相似度改进结果
+            print("\n" + "="*60)
+            print("案例相似度改进完成")
+            print(f"改进的案例数: {len(improved_cases)}")
+            
+            # 统计相似度分析
+            high_sim_count = 0
+            low_sim_count = 0
+            for case in improved_cases:
+                similarity_scores = case.get('similarity_scores', {})
+                max_sim = similarity_scores.get('max_similarity', 0)
+                if max_sim > 0.7:
+                    high_sim_count += 1
+                elif max_sim < 0.3:
+                    low_sim_count += 1
+            
+            print(f"高相似度案例 (>0.7): {high_sim_count}")
+            print(f"低相似度案例 (<0.3): {low_sim_count}")
+            print("="*60)
+        
+        # 停止性能监控
+        if args.enable_monitoring:
+            performance_report = experiment.stop_performance_monitoring()
+            if performance_report:
+                print(f"\n📊 性能监控报告:")
+                print(f"   - 监控时长: {performance_report.get('monitoring_duration', 'N/A')}")
+                print(f"   - 平均CPU使用率: {performance_report.get('cpu_utilization', {}).get('average', 0):.1f}%")
+                print(f"   - 平均内存使用率: {performance_report.get('memory_utilization', {}).get('average', 0):.1f}%")
         
     except Exception as e:
         logger.error(f"❌ 主函数执行失败: {e}")

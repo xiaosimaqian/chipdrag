@@ -39,19 +39,33 @@ class LLMManager:
         
     def _validate_config(self):
         """验证配置"""
-        # 兼容 'name' 字段为 'model'
-        if 'model' not in self.config and 'name' in self.config:
-            self.config['model'] = self.config['name']
+        # 处理嵌套的配置结构
+        if 'models' in self.config:
+            # 使用默认模型配置
+            default_model = self.config['models'].get('default', {})
+            if default_model:
+                self.config['base_url'] = default_model.get('base_url', 'http://localhost:11434')
+                self.config['model'] = default_model.get('name', 'llama2:latest')
+                self.config['temperature'] = default_model.get('temperature', 0.7)
+                self.config['max_tokens'] = default_model.get('max_tokens', 1000)
+        else:
+            # 兼容 'name' 字段为 'model'（只有在没有models配置时才使用）
+            if 'model' not in self.config and 'name' in self.config:
+                self.config['model'] = self.config['name']
+        
         # 设置默认值
         default_config = {
             'base_url': 'http://localhost:11434',
-            'model': 'llama2',
+            'model': 'llama2:latest',
             'temperature': 0.7,
             'max_tokens': 1000
         }
         for key, value in default_config.items():
             if key not in self.config:
                 self.config[key] = value
+                
+        # 记录最终配置
+        logger.info(f"LLM配置: base_url={self.config.get('base_url')}, model={self.config.get('model')}")
                 
     def _init_components(self):
         """初始化组件"""
@@ -94,6 +108,17 @@ class LLMManager:
             self.tokenizer = None
             self.model = None
         
+    def generate(self, prompt: str) -> str:
+        """通用的生成方法，供外部调用
+        
+        Args:
+            prompt: 输入提示
+            
+        Returns:
+            str: 生成的响应
+        """
+        return self._call_ollama(prompt, "strategy_generation")
+    
     def _call_ollama(self, prompt: str, interaction_type: str = "general") -> str:
         """调用Ollama API
         
