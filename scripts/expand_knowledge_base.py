@@ -229,21 +229,29 @@ class KnowledgeBaseExpander:
                             logger.warning(f"无法解析组件数量: {parts[1]}")
                             continue
                 elif line.startswith('DIEAREA'):
-                    # 解析面积
-                    parts = line.split()
-                    if len(parts) >= 5:
-                        try:
-                            # 处理可能的括号格式
-                            x1_str = parts[1].strip('()')
-                            y1_str = parts[2].strip('()')
-                            x2_str = parts[3].strip('()')
-                            y2_str = parts[4].strip('()')
-                            
-                            x1, y1, x2, y2 = map(int, [x1_str, y1_str, x2_str, y2_str])
+                    # 解析面积 - 处理格式: DIEAREA ( x1 y1 ) ( x2 y2 ) ;
+                    try:
+                        # 使用正则表达式提取坐标
+                        import re
+                        pattern = r'DIEAREA\s*\(\s*(\d+)\s+(\d+)\s*\)\s*\(\s*(\d+)\s+(\d+)\s*\)'
+                        match = re.search(pattern, line)
+                        if match:
+                            x1, y1, x2, y2 = map(int, match.groups())
                             area = (x2 - x1) * (y2 - y1)
-                        except ValueError:
-                            logger.warning(f"无法解析DIEAREA坐标: {parts[1:5]}")
-                            continue
+                        else:
+                            # 备用解析方法
+                            parts = line.split()
+                            if len(parts) >= 7:  # DIEAREA ( x1 y1 ) ( x2 y2 ) ;
+                                x1 = int(parts[1].strip('()'))
+                                y1 = int(parts[2].strip('()'))
+                                x2 = int(parts[4].strip('()'))
+                                y2 = int(parts[5].strip('()'))
+                                area = (x2 - x1) * (y2 - y1)
+                            else:
+                                raise ValueError(f"DIEAREA格式不正确: {line}")
+                    except (ValueError, IndexError) as e:
+                        logger.warning(f"无法解析DIEAREA坐标: {line.strip()}, 错误: {str(e)}")
+                        continue
                 elif line.startswith('NETS'):
                     # 解析网络数量
                     parts = line.split()
