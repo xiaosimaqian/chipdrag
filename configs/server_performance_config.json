@@ -1,0 +1,34 @@
+{
+  "description": "服务器性能优化配置 - 充分利用160核CPU和1000GB内存",
+  
+  "hardware_thresholds": {
+    "cpu_high": 160,
+    "cpu_medium": 32,
+    "memory_high_gb": 500,
+    "memory_medium_gb": 50
+  },
+  
+  "super_server_config": {
+    "max_designs_parallel": 16,
+    "max_containers_parallel": 32,
+    "openroad_threads": 16,
+    "batch_size": 64,
+    "rl_training_threads": 20
+  },
+  
+  "high_performance_config": {
+    "max_designs_parallel": 8,
+    "max_containers_parallel": 16,
+    "openroad_threads": 8,
+    "batch_size": 32,
+    "rl_training_threads": 10
+  },
+  
+  "standard_config": {
+    "max_designs_parallel": 4,
+    "max_containers_parallel": 8,
+    "openroad_threads": 4,
+    "batch_size": 16,
+    "rl_training_threads": 4
+  }
+} 

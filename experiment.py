@@ -46,19 +46,33 @@ import sys
 import json
 import logging
 import subprocess
-import numpy as np
 import time
 import argparse
 import shutil
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Set
 from datetime import datetime
-import matplotlib.pyplot as plt
-import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import psutil
 import re
+
+# 安全导入numpy和相关包
+try:
+    import numpy as np
+    print("✅ numpy导入成功")
+except ImportError as e:
+    print(f"❌ numpy导入失败: {e}")
+    print("尝试重新安装: pip install numpy==1.24.3 --force-reinstall")
+    sys.exit(1)
+
+try:
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    print("✅ matplotlib和pandas导入成功")
+except ImportError as e:
+    print(f"⚠️ 可选依赖导入失败: {e}")
+    print("将使用基础功能")
 
 # 添加项目根目录到Python路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -126,10 +140,28 @@ class UnifiedPaperExperiment:
         # 设置日志系统
         self.log_file = setup_logging(self.base_dir)
         
-        # 设置数据目录
-        self.data_dir = Path("dataset/ispd_2015_contest_benchmark")
-        if not self.data_dir.exists():
+        # 设置数据目录 - 检查多个可能的路径
+        possible_paths = [
+            Path("dataset/ispd_2015_contest_benchmark"),
+            Path("data/designs/ispd_2015_contest_benchmark"),
+            Path("/mnt/data/keqin/dataset/ispd_2015_contest_benchmark"),
+            Path("/mnt/data/keqin/data/designs/ispd_2015_contest_benchmark")
+        ]
+        
+        self.data_dir = None
+        for path in possible_paths:
+            if path.exists():
+                self.data_dir = path
+                logger.info(f"找到数据目录: {self.data_dir}")
+                break
+        
+        if self.data_dir is None:
+            logger.error("❌ 未找到ISPD基准测试数据目录")
+            logger.error(f"检查过的路径: {[str(p) for p in possible_paths]}")
+            logger.error("请确保数据目录存在")
+            # 创建一个默认目录避免程序崩溃
             self.data_dir = Path("data/designs/ispd_2015_contest_benchmark")
+            self.data_dir.mkdir(parents=True, exist_ok=True)
         
         # 记录实验开始时间
         self.experiment_start_time = datetime.now()
@@ -145,9 +177,8 @@ class UnifiedPaperExperiment:
             self.max_parallel_containers = 1
             logger.info("本地模式：使用单任务模式以确保Docker容器获得足够内存")
         else:  # server mode
-            self.max_parallel_designs = 2  # 服务器模式可以适当并行
-            self.max_parallel_containers = 2
-            logger.info("服务器模式：使用适度并行策略")
+            # 服务器模式：加载性能配置并充分利用硬件资源
+            self._configure_server_performance()
         
         # 加载配置
         self._load_experiment_config()
@@ -157,6 +188,96 @@ class UnifiedPaperExperiment:
         self._check_execution_environment()
         
         logger.info("统一版论文HPWL对比实验系统初始化完成")
+    
+    def _configure_server_performance(self):
+        """配置服务器性能参数"""
+        logger = logging.getLogger(__name__)
+        
+        # 尝试加载服务器性能配置
+        server_config_path = Path("configs/server_performance_config.json")
+        server_config = {}
+        
+        if server_config_path.exists():
+            try:
+                with open(server_config_path, 'r', encoding='utf-8') as f:
+                    server_config = json.load(f)
+                logger.info(f"✅ 已加载服务器性能配置: {server_config_path}")
+            except Exception as e:
+                logger.warning(f"⚠️ 加载服务器配置失败: {e}")
+        else:
+            logger.info("⚠️ 未找到服务器性能配置文件，使用默认配置")
+        
+        # 获取硬件信息
+        cpu_cores = psutil.cpu_count(logical=True)
+        available_memory_gb = psutil.virtual_memory().available / (1024**3)
+        total_memory_gb = psutil.virtual_memory().total / (1024**3)
+        
+        logger.info(f"硬件配置: {total_memory_gb:.1f}GB总内存, {available_memory_gb:.1f}GB可用内存, {cpu_cores}核CPU")
+        
+        # 根据配置和硬件情况设置性能参数
+        if cpu_cores >= 160 and total_memory_gb >= 900:
+            # 超级服务器配置：充分利用资源
+            self.max_parallel_designs = server_config.get('super_server', {}).get('max_parallel_designs', min(16, cpu_cores // 8))
+            self.max_parallel_containers = server_config.get('super_server', {}).get('max_parallel_containers', min(32, cpu_cores // 4))
+            self.openroad_threads = server_config.get('super_server', {}).get('openroad_threads', min(16, cpu_cores // 10))
+            self.batch_size = server_config.get('super_server', {}).get('batch_size', 64)
+            self.rl_training_threads = server_config.get('super_server', {}).get('rl_training_threads', 20)
+            server_type = "超级服务器"
+        elif cpu_cores >= 32 and total_memory_gb >= 100:
+            # 高性能服务器配置
+            self.max_parallel_designs = server_config.get('high_performance', {}).get('max_parallel_designs', min(8, cpu_cores // 4))
+            self.max_parallel_containers = server_config.get('high_performance', {}).get('max_parallel_containers', min(16, cpu_cores // 2))
+            self.openroad_threads = server_config.get('high_performance', {}).get('openroad_threads', min(8, cpu_cores // 4))
+            self.batch_size = server_config.get('high_performance', {}).get('batch_size', 32)
+            self.rl_training_threads = server_config.get('high_performance', {}).get('rl_training_threads', 12)
+            server_type = "高性能服务器"
+        else:
+            # 标准服务器配置
+            self.max_parallel_designs = server_config.get('standard', {}).get('max_parallel_designs', min(4, cpu_cores // 2))
+            self.max_parallel_containers = server_config.get('standard', {}).get('max_parallel_containers', min(8, cpu_cores))
+            self.openroad_threads = server_config.get('standard', {}).get('openroad_threads', min(4, cpu_cores // 2))
+            self.batch_size = server_config.get('standard', {}).get('batch_size', 16)
+            self.rl_training_threads = server_config.get('standard', {}).get('rl_training_threads', 8)
+            server_type = "标准服务器"
+        
+        logger.info(f"🚀 {server_type}模式配置:")
+        logger.info(f"   - 并行设计数: {self.max_parallel_designs}")
+        logger.info(f"   - 并行容器数: {self.max_parallel_containers}")
+        logger.info(f"   - OpenROAD线程数: {self.openroad_threads}")
+        logger.info(f"   - 批处理大小: {self.batch_size}")
+        logger.info(f"   - RL训练线程数: {self.rl_training_threads}")
+        
+        # 设置环境变量优化
+        env_vars = server_config.get('environment_variables', {})
+        if env_vars:
+            logger.info("设置环境变量优化:")
+            for key, value in env_vars.items():
+                os.environ[key] = str(value)
+                logger.info(f"   - {key}={value}")
+        
+        # 设置默认环境变量
+        default_env = {
+            'OPENROAD_NUM_THREADS': str(self.openroad_threads),
+            'OMP_NUM_THREADS': str(self.openroad_threads),
+            'MKL_NUM_THREADS': str(self.openroad_threads),
+            'OPENBLAS_NUM_THREADS': str(self.openroad_threads)
+        }
+        
+        for key, value in default_env.items():
+            if key not in os.environ:
+                os.environ[key] = value
+                logger.info(f"   - {key}={value} (默认)")
+        
+        # 计算预期性能提升
+        baseline_time = 10  # 假设基线时间为10小时
+        expected_speedup = min(self.max_parallel_designs * 2, cpu_cores / 10)
+        expected_time = baseline_time / expected_speedup
+        
+        logger.info(f"📊 预期性能提升:")
+        logger.info(f"   - 加速比: {expected_speedup:.1f}x")
+        logger.info(f"   - 预期实验时间: {expected_time:.1f}小时 (基线{baseline_time}小时)")
+        logger.info(f"   - CPU利用率目标: {min(90, self.max_parallel_designs * 40)}%")
+        logger.info(f"   - 内存利用率目标: {min(80, self.max_parallel_designs * 30)}%")
         
     def _load_experiment_config(self):
         """加载实验配置"""
@@ -431,72 +552,123 @@ class UnifiedPaperExperiment:
         return 1  # 简化，所有设计优先级相同
     
     def _run_rl_training_phase(self, retriever, rl_agent, state_extractor, design_tasks) -> List[Dict[str, Any]]:
-        """执行RL训练阶段"""
+        """执行RL训练阶段 - 并行执行"""
+        logger.info("=== RL训练阶段: 并行执行 ===")
         training_records = []
         
         # 选择部分设计进行训练
         training_designs = design_tasks[:min(5, len(design_tasks))]
         
+        # 创建训练任务列表
+        training_tasks = []
         for task in training_designs:
-            logger.info(f"训练设计: {task['name']}")
-            
-            # 提取设计特征
             design_info = self._load_design_info(task['dir'])
             state = state_extractor.extract_state(design_info)
             
-            # 执行多个训练回合
+            # 为每个设计生成多个训练回合
             for episode in range(3):  # 每个设计训练3个回合
-                logger.info(f"  训练回合 {episode + 1}/3")
-                
-                # RL智能体选择动作
-                action = rl_agent.select_action(state, training=True)
-                
-                # 执行检索
-                retrieved_cases = retriever.retrieve_with_dynamic_reranking(
-                    query={'features': design_info, 'design_name': task['name']}, 
-                    design_info=design_info
-                )
-                
-                # 生成布局策略
-                layout_strategy = self._generate_layout_strategy(retrieved_cases, action)
-                
-                # 执行布局优化
-                logger.info(f"  执行OpenROAD布局优化...")
-                layout_success = self._execute_openroad_layout(task['dir'], layout_strategy)
-                
-                if layout_success:
-                    reward = self._execute_layout_and_calculate_reward(task['dir'], layout_strategy)
-                    logger.info(f"  布局成功，奖励: {reward:.3f}")
-                else:
-                    reward = 0.1  # 布局失败时的最小奖励
-                    logger.warning(f"  布局失败，使用最小奖励: {reward:.3f}")
-                
-                # 计算下一个状态
-                next_state = self._calculate_next_state(state, action, reward, design_info)
-                
-                # 更新RL智能体
-                rl_agent.update(state, action, reward, next_state)
-                
-                # 记录训练数据
-                training_record = {
-                    'design_name': task['name'],
+                training_tasks.append({
+                    'task': task,
                     'episode': episode + 1,
-                    'state': state,
-                    'action': action,
-                    'reward': reward,
-                    'next_state': next_state,
-                    'retrieved_cases_count': len(retrieved_cases),
-                    'layout_strategy': layout_strategy,
-                    'timestamp': datetime.now().isoformat()
-                }
-                training_records.append(training_record)
-                
-                # 更新当前状态为下一个状态
-                state = next_state
-                
-                logger.info(f"    动作: k={action.k_value}, 奖励: {reward:.4f}")
+                    'design_info': design_info,
+                    'initial_state': state,
+                    'retriever': retriever,
+                    'rl_agent': rl_agent,
+                    'state_extractor': state_extractor
+                })
         
+        logger.info(f"准备并行执行 {len(training_tasks)} 个训练任务，使用 {getattr(self, 'rl_training_threads', 8)} 个线程")
+        
+        # 使用线程池并行执行训练任务
+        with ThreadPoolExecutor(max_workers=getattr(self, 'rl_training_threads', 8)) as executor:
+            # 提交所有训练任务
+            future_to_task = {}
+            for train_task in training_tasks:
+                future = executor.submit(
+                    self._execute_single_training_task,
+                    train_task
+                )
+                future_to_task[future] = train_task
+            
+            # 收集训练结果
+            completed_tasks = 0
+            for future in as_completed(future_to_task):
+                train_task = future_to_task[future]
+                try:
+                    training_record = future.result()
+                    if training_record:
+                        training_records.append(training_record)
+                        completed_tasks += 1
+                        logger.info(f"训练任务完成 {completed_tasks}/{len(training_tasks)}: {train_task['task']['name']} 回合{train_task['episode']}")
+                except Exception as e:
+                    logger.error(f"训练任务失败: {train_task['task']['name']} 回合{train_task['episode']}: {e}")
+        
+        logger.info(f"RL训练阶段完成，共完成 {len(training_records)} 个训练记录")
         return training_records
+    
+    def _execute_single_training_task(self, train_task: Dict) -> Dict[str, Any]:
+        """执行单个训练任务"""
+        task = train_task['task']
+        episode = train_task['episode']
+        design_info = train_task['design_info']
+        state = train_task['initial_state']
+        retriever = train_task['retriever']
+        rl_agent = train_task['rl_agent']
+        
+        try:
+            design_name = task['name']
+            design_dir = task['dir']
+            
+            logger.info(f"执行训练任务: {design_name} 回合{episode}")
+            
+            # RL智能体选择动作
+            action = rl_agent.select_action(state, training=True)
+            
+            # 执行检索
+            retrieved_cases = retriever.retrieve_with_dynamic_reranking(
+                query={'features': design_info, 'design_name': design_name}, 
+                design_info=design_info
+            )
+            
+            # 生成布局策略
+            layout_strategy = self._generate_layout_strategy(retrieved_cases, action)
+            
+            # 执行布局优化
+            logger.info(f"  执行OpenROAD布局优化: {design_name} 回合{episode}")
+            layout_success = self._execute_openroad_layout(design_dir, layout_strategy)
+            
+            if layout_success:
+                reward = self._execute_layout_and_calculate_reward(design_dir, layout_strategy)
+                logger.info(f"  布局成功，奖励: {reward:.3f}")
+            else:
+                reward = 0.1  # 布局失败时的最小奖励
+                logger.warning(f"  布局失败，使用最小奖励: {reward:.3f}")
+            
+            # 计算下一个状态
+            next_state = self._calculate_next_state(state, action, reward, design_info)
+            
+            # 更新RL智能体
+            rl_agent.update(state, action, reward, next_state)
+            
+            # 记录训练数据
+            training_record = {
+                'design_name': design_name,
+                'episode': episode,
+                'state': state,
+                'action': action,
+                'reward': reward,
+                'next_state': next_state,
+                'retrieved_cases_count': len(retrieved_cases),
+                'layout_strategy': layout_strategy,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            logger.info(f"  训练任务完成: {design_name} 回合{episode}, 动作: k={action.k_value}, 奖励: {reward:.4f}")
+            return training_record
+            
+        except Exception as e:
+            logger.error(f"训练任务异常: {task['name']} 回合{episode}: {e}")
+            return None
     
     def _update_retriever_with_training_results(self, retriever, training_records):
         """基于训练结果更新检索器策略"""
@@ -606,11 +778,23 @@ class UnifiedPaperExperiment:
             return False
     
     def _execute_openroad_layout(self, design_dir: Path, layout_strategy: Dict) -> bool:
-        """执行OpenROAD布局 - 根据模式选择执行方式"""
-        if self.mode == "local":
-            return self._execute_openroad_layout_local(design_dir, layout_strategy)
-        else:  # server mode
-            return self._execute_openroad_layout_server(design_dir, layout_strategy)
+        """执行OpenROAD布局 - 根据模式选择执行方式（线程安全）"""
+        # 确保路径是 Path 对象
+        if isinstance(design_dir, str):
+            design_dir = Path(design_dir)
+        
+        # 添加线程标识用于日志
+        thread_id = threading.current_thread().ident
+        logger.info(f"线程{thread_id}: 开始OpenROAD布局执行 - {design_dir.name}")
+        
+        try:
+            if self.mode == "local":
+                return self._execute_openroad_layout_local(design_dir, layout_strategy)
+            else:  # server mode
+                return self._execute_openroad_layout_server(design_dir, layout_strategy)
+        except Exception as e:
+            logger.error(f"线程{thread_id}: OpenROAD布局执行异常 - {design_dir.name}: {e}")
+            return False
     
     def _execute_openroad_layout_local(self, design_dir: Path, layout_strategy: Dict) -> bool:
         """本地模式：使用Docker执行OpenROAD布局"""
@@ -643,9 +827,10 @@ class UnifiedPaperExperiment:
             return False
     
     def _execute_openroad_layout_server(self, design_dir: Path, layout_strategy: Dict) -> bool:
-        """服务器模式：直接执行OpenROAD布局"""
+        """服务器模式：直接执行OpenROAD布局（并行优化）"""
         try:
-            logger.info(f"服务器模式OpenROAD布局执行: {design_dir.name}")
+            thread_id = threading.current_thread().ident
+            logger.info(f"线程{thread_id}: 服务器模式OpenROAD布局执行 - {design_dir.name}")
             
             # 检查必要的设计文件
             required_files = ["tech.lef", "cells.lef", "floorplan.def", "design.v"]
@@ -655,32 +840,32 @@ class UnifiedPaperExperiment:
                     missing_files.append(file_name)
             
             if missing_files:
-                logger.error(f"❌ 缺少必要文件: {missing_files}")
+                logger.error(f"线程{thread_id}: ❌ 缺少必要文件: {missing_files}")
                 return False
             
             # 生成OpenROAD脚本
             design_name = design_dir.name
             script_content = self._generate_openroad_script_server(layout_strategy, design_name)
             
-            # 写入TCL脚本
-            script_file = design_dir / "run_placement.tcl"
+            # 写入TCL脚本 - 添加线程标识避免文件冲突
+            script_file = design_dir / f"run_placement_{thread_id}.tcl"
             with open(script_file, 'w') as f:
                 f.write(script_content)
             
-            logger.info(f"OpenROAD TCL脚本已写入: {script_file}")
+            logger.info(f"线程{thread_id}: OpenROAD TCL脚本已写入: {script_file}")
             
             # 执行OpenROAD命令
             success = self._run_openroad_command(design_dir, script_file)
             
             if success:
-                logger.info(f"✅ 服务器模式OpenROAD布局执行成功: {design_dir.name}")
+                logger.info(f"线程{thread_id}: ✅ 服务器模式OpenROAD布局执行成功: {design_dir.name}")
                 return True
             else:
-                logger.error(f"❌ 服务器模式OpenROAD布局执行失败: {design_dir.name}")
+                logger.error(f"线程{thread_id}: ❌ 服务器模式OpenROAD布局执行失败: {design_dir.name}")
                 return False
                 
         except Exception as e:
-            logger.error(f"服务器模式OpenROAD布局执行异常: {e}")
+            logger.error(f"线程{thread_id}: 服务器模式OpenROAD布局执行异常: {e}")
             return False
     
     def _run_openroad_with_docker(self, design_dir: Path, layout_strategy: Dict) -> bool:
@@ -755,55 +940,59 @@ class UnifiedPaperExperiment:
             return False
     
     def _run_openroad_command(self, design_dir: Path, script_file: Path) -> bool:
-        """服务器模式：直接运行OpenROAD命令"""
+        """服务器模式：直接运行OpenROAD命令（线程安全）"""
+        thread_id = threading.current_thread().ident
+        
         try:
-            # 切换到设计目录
-            original_dir = os.getcwd()
-            os.chdir(design_dir)
+            # 使用subprocess.run的cwd参数而非os.chdir避免线程冲突
+            logger.info(f"线程{thread_id}: 准备执行OpenROAD命令")
             
             # 构建OpenROAD命令
             cmd = ["openroad", "-no_init", "-no_splash", "-exit", script_file.name]
             
-            logger.info(f"执行OpenROAD命令: {' '.join(cmd)}")
+            # 设置环境变量以利用多线程
+            env = os.environ.copy()
+            env["OPENROAD_NUM_THREADS"] = str(getattr(self, 'openroad_threads', 4))
+            env["OMP_NUM_THREADS"] = str(getattr(self, 'openroad_threads', 4))
+            env["MKL_NUM_THREADS"] = str(getattr(self, 'openroad_threads', 4))
+            env["OPENBLAS_NUM_THREADS"] = str(getattr(self, 'openroad_threads', 4))
             
-            # 执行命令
+            logger.info(f"线程{thread_id}: 执行OpenROAD命令: {' '.join(cmd)}")
+            logger.info(f"线程{thread_id}: 使用{getattr(self, 'openroad_threads', 4)}个线程")
+            
+            # 执行命令（使用cwd参数避免线程冲突）
             result = subprocess.run(
                 cmd,
+                env=env,
+                cwd=design_dir,  # 使用cwd参数而非os.chdir
                 capture_output=True,
                 text=True,
                 timeout=3600  # 1小时超时
             )
             
-            # 保存执行日志
-            log_file = design_dir / "openroad_execution.log"
+            # 保存执行日志 - 添加线程标识避免冲突
+            log_file = design_dir / f"openroad_execution_{thread_id}.log"
             with open(log_file, 'w') as f:
+                f.write(f"Thread ID: {thread_id}\n")
                 f.write(f"Return Code: {result.returncode}\n")
                 f.write(f"STDOUT:\n{result.stdout}\n")
                 f.write(f"STDERR:\n{result.stderr}\n")
-            
-            # 恢复原目录
-            os.chdir(original_dir)
             
             # 检查结果
             if result.returncode == 0:
                 placed_def = design_dir / "placed.def"
                 if placed_def.exists():
-                    logger.info(f"✅ OpenROAD执行成功，结果已保存到 {placed_def}")
+                    logger.info(f"线程{thread_id}: ✅ OpenROAD执行成功，结果已保存到 {placed_def}")
                     return True
                 else:
-                    logger.warning("⚠️ OpenROAD执行成功但未生成placed.def文件")
+                    logger.warning(f"线程{thread_id}: ⚠️ OpenROAD执行成功但未生成placed.def文件")
                     return False
             else:
-                logger.error(f"❌ OpenROAD执行失败，返回码: {result.returncode}")
+                logger.error(f"线程{thread_id}: ❌ OpenROAD执行失败，返回码: {result.returncode}")
                 return False
                 
         except Exception as e:
-            logger.error(f"❌ OpenROAD执行异常: {e}")
-            # 确保恢复原目录
-            try:
-                os.chdir(original_dir)
-            except:
-                pass
+            logger.error(f"线程{thread_id}: ❌ OpenROAD执行异常: {e}")
             return False
     
     def _generate_openroad_script_docker(self, layout_strategy: Dict, design_name: str) -> str:
@@ -866,6 +1055,7 @@ puts "=== 布局完成 ==="
         """生成服务器模式的OpenROAD脚本"""
         utilization = layout_strategy.get('parameters', {}).get('utilization', 0.7)
         aspect_ratio = layout_strategy.get('parameters', {}).get('aspect_ratio', 1.0)
+        threads = getattr(self, 'openroad_threads', 4)
         
         return f"""
 # === 服务器模式OpenROAD布局脚本 ===
@@ -873,7 +1063,8 @@ puts "=== 服务器模式OpenROAD布局脚本 ==="
 puts "当前工作目录: [pwd]"
 
 # 设置线程数
-set_thread_count 4
+set_thread_count {threads}
+puts "设置线程数: {threads}"
 
 # 完全重置OpenROAD状态
 if {{[info exists ::ord::db]}} {{
