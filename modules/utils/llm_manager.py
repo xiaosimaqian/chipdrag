@@ -136,8 +136,19 @@ class LLMManager:
         logger.info(f"=== LLM {interaction_type.upper()} 查询 ===")
         logger.info(f"查询内容:\n{prompt}")
         
-        max_retries = 5
-        retry_delay = 3  # 秒
+        # 从配置中获取超时和重试设置
+        timeout = self.config.get('timeout', 180)
+        max_retries = self.config.get('retry_attempts', 3)
+        retry_delay = self.config.get('retry_delay', 3)
+        
+        # 如果配置中有models.default的超时设置，优先使用
+        if 'models' in self.config and 'default' in self.config['models']:
+            timeout = self.config['models']['default'].get('timeout', timeout)
+            max_retries = self.config['models']['default'].get('retry_attempts', max_retries)
+            retry_delay = self.config['models']['default'].get('retry_delay', retry_delay)
+        
+        logger.info(f"使用超时设置: {timeout}秒, 重试次数: {max_retries}")
+        
         start_time = datetime.now()
         
         for attempt in range(max_retries):
@@ -151,7 +162,7 @@ class LLMManager:
                         "max_tokens": self.max_tokens,
                         "stream": False
                     },
-                    timeout=120  # 增加超时时间到120秒
+                    timeout=timeout  # 使用配置的超时时间
                 )
                 response.raise_for_status()
                 
@@ -953,7 +964,7 @@ class LLMManager:
             }
     
     def _build_layout_strategy_prompt(self, design_analysis: Dict[str, Any], knowledge: Dict[str, Any]) -> str:
-        """构建布局策略生成提示
+        """构建布局策略生成提示（优化版）
         
         Args:
             design_analysis: 设计分析结果
@@ -964,50 +975,25 @@ class LLMManager:
         """
         complexity = design_analysis.get('complexity_level', 'medium')
         design_type = design_analysis.get('design_type', 'unknown')
-        features = design_analysis.get('key_features', [])
-        priorities = design_analysis.get('optimization_priorities', [])
         
-        prompt = f"""
-基于以下设计分析和知识，生成芯片布局策略：
+        # 简化的提示词
+        prompt = f"""基于设计分析生成芯片布局策略。
 
-设计分析：
-- 复杂度级别: {complexity}
-- 设计类型: {design_type}
-- 关键特征: {features}
-- 优化优先级: {priorities}
+设计: {design_type}, 复杂度: {complexity}
 
-相关知识: {knowledge}
-
-请生成详细的布局策略，包括：
-1. 布局策略选择
-2. 布线策略选择
-3. 优化参数建议
-4. 约束处理方式
-5. 质量目标设定
-6. 执行计划
-
-请以JSON格式返回策略，包含以下字段：
-- placement_strategy: 布局策略
-- routing_strategy: 布线策略
-- optimization_priorities: 优化优先级列表
-- parameter_suggestions: 参数建议字典
-- constraint_handling: 约束处理方式
-- quality_targets: 质量目标
-- execution_plan: 执行计划列表
-- metadata: 元数据信息
-
-请严格只返回一个JSON对象，包含以下字段，不要输出任何解释、注释或自然语言说明：
+返回JSON格式策略:
 {{
-  "placement_strategy": "...",
-  "routing_strategy": "...",
-  "optimization_priorities": [...],
-  "parameter_suggestions": {{...}},
-  "constraint_handling": {{...}},
-  "quality_targets": {{...}},
-  "execution_plan": [...],
-  "metadata": {{...}}
+  "placement_strategy": "hierarchical",
+  "routing_strategy": "timing_driven", 
+  "optimization_priorities": ["wirelength", "timing"],
+  "parameter_suggestions": {{"density_target": 0.7, "wirelength_weight": 1.0}},
+  "constraint_handling": {{"timing_constraints": "moderate"}},
+  "quality_targets": {{"hpwl_improvement": 0.05}},
+  "execution_plan": ["placement", "optimization"],
+  "metadata": {{"source": "llm_strategy", "timestamp": "2024-07-10T12:00:00Z", "version": "1.0"}}
 }}
-"""
+
+仅返回JSON，无其他文本。"""
         return prompt
     
     def _parse_layout_strategy_response(self, response: str) -> Dict[str, Any]:
@@ -1119,40 +1105,26 @@ class LLMManager:
         timing = layout.get('timing', 0)
         power = layout.get('power', 0)
         
-        prompt = f"""
-请分析以下芯片布局结果，并提供详细的质量评估：
+        # 简化的提示词
+        prompt = f"""分析芯片布局质量。
 
-布局信息：
-- 组件数量: {components_count}
-- 网络数量: {nets_count}
-- 面积利用率: {area_utilization}
-- 线长: {wirelength}
-- 时序性能: {timing}
-- 功耗分布: {power}
+数据: 组件{components_count}个, 面积利用率{area_utilization}, 线长{wirelength}
 
-请从以下方面进行分析：
-1. 总体质量评分
-2. 面积利用率评估
-3. 布线质量评估
-4. 时序性能评估
-5. 功耗分布评估
-6. 发现的问题
-7. 改进建议
-8. 是否需要优化
-9. 优化优先级
+返回JSON结果:
+{{
+  "quality_score": 0.8,
+  "area_utilization": 0.8,
+  "routing_quality": 0.75,
+  "timing_performance": 0.8,
+  "power_distribution": 0.75,
+  "issues": ["布局质量良好"],
+  "suggestions": ["继续优化"],
+  "needs_optimization": false,
+  "optimization_priority": "low",
+  "metadata": {{"source": "llm_analysis", "timestamp": "2024-07-10T12:00:00Z", "version": "1.0"}}
+}}
 
-请以JSON格式返回分析结果，包含以下字段：
-- quality_score: 总体质量评分 (0-1)
-- area_utilization: 面积利用率 (0-1)
-- routing_quality: 布线质量 (0-1)
-- timing_performance: 时序性能 (0-1)
-- power_distribution: 功耗分布 (0-1)
-- issues: 发现的问题列表
-- suggestions: 改进建议列表
-- needs_optimization: 是否需要优化 (boolean)
-- optimization_priority: 优化优先级 (low/medium/high)
-- metadata: 元数据信息
-"""
+仅返回JSON，无其他文本。"""
         return prompt
     
     def _parse_layout_analysis_response(self, response: str) -> Dict:

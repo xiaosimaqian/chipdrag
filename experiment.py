@@ -1077,43 +1077,127 @@ read_lef cells.lef
 puts "读取Verilog文件: design.v"
 read_verilog design.v
 
-# 读取DEF文件
+# 读取DEF文件并检查是否需要初始化
 puts "读取DEF文件: floorplan.def"
 read_def floorplan.def
 
-# 初始化布局（使用LLM优化的参数）
-puts "初始化floorplan..."
+# 检查是否已有floorplan设置
+set floorplan_exists 0
 if {{[catch {{
-    initialize_floorplan -utilization {utilization} -aspect_ratio {aspect_ratio} -core_space 30
+    set die_area [ord::get_die_area]
+    if {{$die_area != ""}} {{
+        set floorplan_exists 1
+        puts "✅ 检测到已存在的floorplan设置"
+    }}
 }} err]}} {{
-    puts "❌ 初始化失败: $err"
-    # 尝试更保守的参数
-    puts "尝试更保守的初始化参数..."
-    initialize_floorplan -utilization {max(0.5, utilization-0.1)} -aspect_ratio {aspect_ratio} -core_space 50
+    puts "检查floorplan状态时出错: $err"
 }}
 
-# 全局布局（使用LLM优化的参数）
+set init_success 0
+
+if {{$floorplan_exists == 1}} {{
+    puts "使用已有的floorplan设置，跳过初始化"
+    set init_success 1
+}} else {{
+    puts "未检测到floorplan设置，开始初始化..."
+    
+    # 第一次尝试：使用LLM优化的参数
+    if {{[catch {{
+        initialize_floorplan -utilization {utilization} -aspect_ratio {aspect_ratio} -core_space 30
+        set init_success 1
+        puts "✅ 使用LLM优化参数初始化成功"
+    }} err]}} {{
+        puts "❌ LLM优化参数初始化失败: $err"
+        
+        # 第二次尝试：使用更保守的参数
+        puts "尝试更保守的初始化参数..."
+        if {{![catch {{
+            initialize_floorplan -utilization {max(0.5, utilization-0.1)} -aspect_ratio {aspect_ratio} -core_space 50
+            set init_success 1
+            puts "✅ 使用保守参数初始化成功"
+        }}]}} {{
+            puts "❌ 保守参数初始化也失败"
+            
+            # 第三次尝试：使用最基本的参数
+            if {{![catch {{
+                initialize_floorplan -utilization 0.4 -aspect_ratio 1.0 -core_space 100
+                set init_success 1
+                puts "✅ 使用基本参数初始化成功"
+            }}]}} {{
+                puts "❌ 所有初始化尝试均失败"
+            }}
+        }}
+    }}
+}}
+
+# 检查初始化是否成功
+if {{$init_success == 0}} {{
+    puts "❌ 初始化失败，终止脚本"
+    exit 1
+}}
+
+# 全局布局（增强的fallback机制）
 puts "执行全局布局..."
 puts "使用智能参数 - 密度: {placement_density:.3f}, 溢出: {overflow_threshold:.3f}"
+set gp_success 0
+
+# 第一次尝试：使用LLM优化的参数
 if {{[catch {{
     global_placement -density {placement_density} -overflow {overflow_threshold}
+    set gp_success 1
+    puts "✅ 使用LLM优化参数全局布局成功"
 }} err]}} {{
-    puts "❌ 全局布局失败: $err"
-    # 尝试更保守的参数
+    puts "❌ LLM优化参数全局布局失败: $err"
+    
+    # 第二次尝试：使用更保守的参数
     set fallback_density [expr {{{placement_density}}} * 0.85]
     set fallback_overflow [expr {{{overflow_threshold}}} * 1.3]
     puts "尝试更保守的全局布局参数: 密度$fallback_density, 溢出$fallback_overflow"
-    global_placement -density $fallback_density -overflow $fallback_overflow
+    if {{![catch {{
+        global_placement -density $fallback_density -overflow $fallback_overflow
+        set gp_success 1
+        puts "✅ 使用保守参数全局布局成功"
+    }}]}} {{
+        puts "❌ 保守参数全局布局也失败"
+        
+        # 第三次尝试：使用最基本的参数
+        if {{![catch {{
+            global_placement -density 0.6 -overflow 0.2
+            set gp_success 1
+            puts "✅ 使用基本参数全局布局成功"
+        }}]}} {{
+            puts "❌ 所有全局布局尝试均失败"
+        }}
+    }}
 }}
 
 # 详细布局（增强容错性）
 puts "执行详细布局..."
+set dp_success 0
+
 if {{[catch {{
     detailed_placement -max_displacement 150 -disallow_one_site_gaps
+    set dp_success 1
+    puts "✅ 详细布局成功"
 }} err]}} {{
     puts "❌ 详细布局失败: $err"
     puts "尝试更宽松的详细布局参数..."
-    detailed_placement -max_displacement 200
+    
+    if {{![catch {{
+        detailed_placement -max_displacement 200
+        set dp_success 1
+        puts "✅ 使用宽松参数详细布局成功"
+    }}]}} {{
+        puts "❌ 宽松参数详细布局也失败"
+        
+        # 尝试仅使用全局布局结果
+        if {{$gp_success == 1}} {{
+            puts "⚠️ 使用全局布局结果作为最终结果"
+            set dp_success 1
+        }} else {{
+            puts "❌ 全局布局和详细布局都失败"
+        }}
+    }}
 }}
 
 # 输出结果
@@ -1176,55 +1260,131 @@ read_lef cells.lef
 puts "读取Verilog文件: design.v"
 read_verilog design.v
 
-# 读取DEF文件
+# 读取DEF文件并检查是否需要初始化
 puts "读取DEF文件: floorplan.def"
 read_def floorplan.def
 
-# 初始化布局（更保守的参数）
-puts "初始化floorplan..."
+# 检查是否已有floorplan设置
+set floorplan_exists 0
 if {{[catch {{
-    initialize_floorplan -utilization {max(0.6, utilization-0.1)} -aspect_ratio {aspect_ratio} -core_space 30
+    set die_area [ord::get_die_area]
+    if {{$die_area != ""}} {{
+        set floorplan_exists 1
+        puts "✅ 检测到已存在的floorplan设置"
+    }}
 }} err]}} {{
-    puts "❌ 初始化失败: $err"
-    # 尝试使用不同的site名称和更低的利用率
-    set site_candidates [list "core" "CoreSite" "unit" "CORE"]
-    foreach site $site_candidates {{
-        if {{![catch {{
-            initialize_floorplan -utilization 0.5 -aspect_ratio {aspect_ratio} -core_space 50 -site $site
-        }}]}} {{
-            puts "✅ 使用site $site 初始化成功"
-            break
+    puts "检查floorplan状态时出错: $err"
+}}
+
+set init_success 0
+
+if {{$floorplan_exists == 1}} {{
+    puts "使用已有的floorplan设置，跳过初始化"
+    set init_success 1
+}} else {{
+    puts "未检测到floorplan设置，开始初始化..."
+    
+    # 第一次尝试：使用LLM优化的参数
+    if {{[catch {{
+        initialize_floorplan -utilization {max(0.6, utilization-0.1)} -aspect_ratio {aspect_ratio} -core_space 30
+        set init_success 1
+        puts "✅ 使用LLM优化参数初始化成功"
+    }} err]}} {{
+        puts "❌ LLM优化参数初始化失败: $err"
+        
+        # 第二次尝试：使用不同的site名称
+        set site_candidates [list "core" "CoreSite" "unit" "CORE"]
+        foreach site $site_candidates {{
+            if {{![catch {{
+                initialize_floorplan -utilization 0.5 -aspect_ratio {aspect_ratio} -core_space 50 -site $site
+                set init_success 1
+                puts "✅ 使用site $site 初始化成功"
+                break
+            }}]}} {{
+                puts "尝试site $site失败"
+            }}
+        }}
+        
+        # 第三次尝试：使用最保守的参数
+        if {{$init_success == 0}} {{
+            if {{![catch {{
+                initialize_floorplan -utilization 0.4 -aspect_ratio 1.0 -core_space 100
+                set init_success 1
+                puts "✅ 使用最保守参数初始化成功"
+            }}]}} {{
+                puts "❌ 所有初始化尝试均失败"
+            }}
         }}
     }}
 }}
 
-# 全局布局（使用LLM优化的参数）
+# 检查初始化是否成功
+if {{$init_success == 0}} {{
+    puts "❌ 初始化失败，终止脚本"
+    exit 1
+}}
+
+# 全局布局（增强的fallback机制）
 puts "执行全局布局..."
 puts "使用智能参数 - 密度: {placement_density:.3f}, 溢出: {overflow_threshold:.3f}"
+set gp_success 0
+
+# 第一次尝试：使用LLM优化的参数
 if {{[catch {{
     global_placement -density {placement_density} -overflow {overflow_threshold}
+    set gp_success 1
+    puts "✅ 使用LLM优化参数全局布局成功"
 }} err]}} {{
-    puts "❌ 全局布局失败: $err"
-    # 尝试更保守的参数
+    puts "❌ LLM优化参数全局布局失败: $err"
+    
+    # 第二次尝试：使用更保守的参数
     set fallback_density [expr {{{placement_density}}} * 0.85]
     set fallback_overflow [expr {{{overflow_threshold}}} * 1.3]
     puts "尝试更保守的全局布局参数: 密度$fallback_density, 溢出$fallback_overflow"
-    global_placement -density $fallback_density -overflow $fallback_overflow
+    if {{![catch {{
+        global_placement -density $fallback_density -overflow $fallback_overflow
+        set gp_success 1
+        puts "✅ 使用保守参数全局布局成功"
+    }}]}} {{
+        puts "❌ 保守参数全局布局也失败"
+        
+        # 第三次尝试：使用最基本的参数
+        if {{![catch {{
+            global_placement -density 0.6 -overflow 0.2
+            set gp_success 1
+            puts "✅ 使用基本参数全局布局成功"
+        }}]}} {{
+            puts "❌ 所有全局布局尝试均失败"
+        }}
+    }}
 }}
 
 # 详细布局（增强容错性）
 puts "执行详细布局..."
+set dp_success 0
+
 if {{[catch {{
     detailed_placement -max_displacement 150 -disallow_one_site_gaps
+    set dp_success 1
+    puts "✅ 详细布局成功"
 }} err]}} {{
     puts "❌ 详细布局失败: $err"
     puts "尝试更宽松的详细布局参数..."
-    if {{[catch {{
+    
+    if {{![catch {{
         detailed_placement -max_displacement 200
-    }} err2]}} {{
-        puts "❌ 详细布局仍然失败: $err2"
+        set dp_success 1
+        puts "✅ 使用宽松参数详细布局成功"
+    }}]}} {{
+        puts "❌ 宽松参数详细布局也失败"
+        
         # 尝试仅使用全局布局结果
-        puts "使用全局布局结果作为最终结果..."
+        if {{$gp_success == 1}} {{
+            puts "⚠️ 使用全局布局结果作为最终结果"
+            set dp_success 1
+        }} else {{
+            puts "❌ 全局布局和详细布局都失败"
+        }}
     }}
 }}
 
@@ -1604,16 +1764,58 @@ RL智能体选择的动作：
             
             if def_file.exists():
                 hpwl = self._extract_hpwl_from_def(def_file)
-                if hpwl is not None:
-                    # 基于HPWL计算奖励
-                    normalized_reward = max(0.1, min(1.0, 1.0 - (hpwl / 1e10)))
-                    return normalized_reward
+                if hpwl is not None and hpwl > 0:
+                    # 基于真实HPWL计算奖励 (越小越好)
+                    # 使用对数缩放避免极端值
+                    normalized_hpwl = np.log10(max(1, hpwl)) / 10  # 归一化到0-1范围
+                    reward = max(0.1, min(1.0, 1.0 - normalized_hpwl))
+                    logger.info(f"    真实HPWL: {hpwl:.0f}, 归一化奖励: {reward:.3f}")
+                    return reward
+                else:
+                    # HPWL提取失败，检查是否是布局失败
+                    if self._check_placement_success(def_file):
+                        logger.warning(f"    布局成功但HPWL提取失败，使用中等奖励")
+                        return 0.5
+                    else:
+                        logger.warning(f"    布局失败(无组件)，使用低奖励")
+                        return 0.1
             
+            logger.warning(f"    未找到DEF文件，使用最低奖励")
             return 0.1
             
         except Exception as e:
             logger.error(f"计算布局奖励失败: {e}")
             return 0.1
+    
+    def _check_placement_success(self, def_file: Path) -> bool:
+        """检查布局是否成功（是否有组件被放置）"""
+        try:
+            with open(def_file, 'r') as f:
+                content = f.read()
+            
+            # 检查是否有组件
+            components_match = re.search(r'COMPONENTS\s+(\d+)', content)
+            if components_match:
+                num_components = int(components_match.group(1))
+                if num_components > 0:
+                    # 检查是否有PLACED的组件
+                    placed_count = content.count('PLACED')
+                    if placed_count > 0:
+                        logger.info(f"    检测到 {num_components} 个组件，其中 {placed_count} 个已放置")
+                        return True
+                    else:
+                        logger.warning(f"    有 {num_components} 个组件但未放置")
+                        return False
+                else:
+                    logger.warning(f"    COMPONENTS为0，布局失败")
+                    return False
+            else:
+                logger.warning(f"    未找到COMPONENTS声明")
+                return False
+                
+        except Exception as e:
+            logger.error(f"检查布局成功状态失败: {e}")
+            return False
     
     def _extract_hpwl_from_def(self, def_file: Path) -> Optional[float]:
         """从DEF文件提取HPWL"""
