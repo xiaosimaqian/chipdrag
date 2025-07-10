@@ -166,9 +166,9 @@ def test_real_def_files():
     experiment = UnifiedPaperExperiment(mode="server")
     
     # 查找测试用的DEF文件
-    data_dir = Path("data")
+    data_dir = Path("data/designs/ispd_2015_contest_benchmark")
     if not data_dir.exists():
-        logger.error("data目录不存在")
+        logger.error(f"数据目录不存在: {data_dir}")
         return {}
     
     # 查找所有DEF文件
