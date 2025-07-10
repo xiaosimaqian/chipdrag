@@ -7,10 +7,10 @@
         "default": {
             "name": "deepseek-coder:latest",
             "base_url": "http://localhost:11434",
-            "temperature": 0.7,
-            "max_tokens": 800,
-            "top_p": 0.9,
-            "top_k": 40,
+            "temperature": 0.8,
+            "max_tokens": 1500,
+            "top_p": 0.95,
+            "top_k": 50,
             "repetition_penalty": 1.1,
             "stop_sequences": ["", "Human:", "Assistant:"],
             "context_window": 8192,
@@ -21,8 +21,8 @@
         "code": {
             "name": "deepseek-coder:latest",
             "base_url": "http://localhost:11434",
-            "temperature": 0.2,
-            "max_tokens": 2000,
+            "temperature": 0.4,
+            "max_tokens": 2500,
             "top_p": 0.95,
             "top_k": 50,
             "repetition_penalty": 1.2,
@@ -35,10 +35,10 @@
         "layout": {
             "name": "deepseek-coder:latest",
             "base_url": "http://localhost:11434",
-            "temperature": 0.3,
-            "max_tokens": 1000,
-            "top_p": 0.9,
-            "top_k": 40,
+            "temperature": 0.6,
+            "max_tokens": 2000,
+            "top_p": 0.95,
+            "top_k": 50,
             "repetition_penalty": 1.1,
             "stop_sequences": ["", "Human:", "Assistant:", "```"],
             "context_window": 8192,
@@ -49,10 +49,11 @@
     },
     
     "prompts": {
-        "system": "你是一个专业的芯片布局设计助手，擅长分析电路结构并生成高质量的布局方案。",
-        "code_generation": "请根据以下电路描述生成对应的布局代码：\n{circuit_description}",
-        "layout_analysis": "请分析以下布局方案的质量和优化空间：\n{layout_description}",
-        "constraint_check": "请检查以下布局是否满足所有约束条件：\n{constraints}\n{layout}"
+        "system": "你是一个专业的芯片布局设计专家，专门从事EDA（电子设计自动化）工具开发和芯片布局算法研究。你的专业领域包括：\n\n1. 计算机科学 - 芯片布局算法（如力导向布局、层次化布局、时序驱动布局）\n2. 编程 - OpenROAD TCL脚本编写、Python自动化脚本\n3. 算法设计 - 布局优化算法、布线算法、时序分析算法\n4. 数据分析 - 布局质量分析、性能指标评估\n\n你能够：\n- 分析电路结构并生成具体的布局策略\n- 提供详细的OpenROAD TCL脚本\n- 解释布局决策的技术原理\n- 给出可执行的优化建议\n- 进行布局质量分析和性能评估\n\n请始终提供具体、可操作的建议，避免过于保守的回复。芯片布局是计算机科学的重要分支，涉及算法设计、编程实现和数据分析。",
+        "code_generation": "请根据以下电路描述生成具体的布局代码和策略：\n\n电路描述：{circuit_description}\n\n要求：\n1. 提供具体的OpenROAD TCL脚本\n2. 解释每个步骤的技术原理\n3. 给出布局参数建议\n4. 说明预期的优化效果",
+        "layout_analysis": "请详细分析以下布局方案，提供具体的改进建议：\n\n布局描述：{layout_description}\n\n分析要求：\n1. 识别布局中的问题\n2. 提供具体的优化方案\n3. 给出改进后的预期效果\n4. 提供可执行的TCL脚本",
+        "constraint_check": "请检查以下布局是否满足约束条件，并提供具体的改进方案：\n\n约束条件：{constraints}\n布局信息：{layout}\n\n检查要求：\n1. 逐项检查约束满足情况\n2. 提供具体的违反约束解决方案\n3. 给出优化后的布局参数\n4. 提供验证脚本",
+        "strategy_generation": "基于以下设计信息，生成具体的布局策略：\n\n设计信息：{design_info}\n\n策略要求：\n1. 提供详细的布局步骤\n2. 给出具体的参数设置\n3. 解释每个决策的技术原因\n4. 提供可执行的TCL脚本\n5. 预测布局质量和性能指标"
     },
     
     "cache": {

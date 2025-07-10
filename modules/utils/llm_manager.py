@@ -1020,25 +1020,68 @@ class LLMManager:
         """
         complexity = design_analysis.get('complexity_level', 'medium')
         design_type = design_analysis.get('design_type', 'unknown')
+        component_count = design_analysis.get('component_count', 1000)
+        net_count = design_analysis.get('net_count', 2000)
         
-        # 简化的提示词
-        prompt = f"""基于设计分析生成芯片布局策略。
+        # 构建详细的提示词
+        prompt = f"""你是一个专业的芯片布局算法专家，专门从事EDA工具开发和布局优化算法研究。这是一个计算机科学和编程问题，涉及算法设计、数据结构和性能优化。
 
-设计: {design_type}, 复杂度: {complexity}
+基于以下设计信息，生成具体的芯片布局策略：
 
-返回JSON格式策略:
+设计类型: {design_type}
+复杂度: {complexity}
+组件数量: {component_count}
+网络数量: {net_count}
+
+请提供详细的布局算法策略，包括：
+
+1. 布局算法选择（hierarchical/analytical/force-directed）
+2. 布线策略（timing-driven/power-driven/area-driven）
+3. 优化优先级（wirelength/timing/power/area）
+4. 具体参数设置（密度目标、权重等）
+5. 约束处理策略
+6. 质量目标
+7. 执行计划
+
+请以JSON格式返回，格式如下：
 {{
   "placement_strategy": "hierarchical",
-  "routing_strategy": "timing_driven", 
-  "optimization_priorities": ["wirelength", "timing"],
-  "parameter_suggestions": {{"density_target": 0.7, "wirelength_weight": 1.0}},
-  "constraint_handling": {{"timing_constraints": "moderate"}},
-  "quality_targets": {{"hpwl_improvement": 0.05}},
-  "execution_plan": ["placement", "optimization"],
-  "metadata": {{"source": "llm_strategy", "timestamp": "2024-07-10T12:00:00Z", "version": "1.0"}}
+  "routing_strategy": "timing_driven",
+  "optimization_priorities": ["wirelength", "timing", "power"],
+  "parameter_suggestions": {{
+    "density_target": 0.7,
+    "wirelength_weight": 1.0,
+    "timing_weight": 0.8,
+    "power_weight": 0.6,
+    "area_weight": 0.5
+  }},
+  "constraint_handling": {{
+    "timing_constraints": "aggressive",
+    "power_constraints": "moderate",
+    "area_constraints": "flexible"
+  }},
+  "quality_targets": {{
+    "hpwl_improvement": 0.05,
+    "timing_slack": 0.1,
+    "power_reduction": 0.03,
+    "area_utilization": 0.8
+  }},
+  "execution_plan": [
+    "initial_placement",
+    "timing_optimization", 
+    "power_optimization",
+    "area_optimization",
+    "final_legalization"
+  ],
+  "metadata": {{
+    "source": "llm_layout_strategy",
+    "timestamp": "2024-07-10T12:00:00Z",
+    "version": "1.0"
+  }}
 }}
 
-仅返回JSON，无其他文本。"""
+请确保回复是具体、可执行的策略，避免过于保守的回复。这是计算机科学和编程问题，需要具体的算法和代码实现。"""
+        
         return prompt
     
     def _parse_layout_strategy_response(self, response: str) -> Dict[str, Any]:
@@ -1150,12 +1193,26 @@ class LLMManager:
         timing = layout.get('timing', 0)
         power = layout.get('power', 0)
         
-        # 简化的提示词
-        prompt = f"""分析芯片布局质量。
+        # 优化的提示词
+        prompt = f"""你是一个专业的芯片布局算法专家，专门从事EDA工具开发和布局质量分析。这是一个计算机科学和编程问题，涉及算法性能评估和数据结构分析。
 
-数据: 组件{components_count}个, 面积利用率{area_utilization}, 线长{wirelength}
+请分析以下芯片布局的质量指标：
 
-返回JSON结果:
+布局数据：
+- 组件数量: {components_count}
+- 网络数量: {nets_count}
+- 面积利用率: {area_utilization}
+- 线长: {wirelength}
+- 时序性能: {timing}
+- 功耗: {power}
+
+请从算法和编程角度分析布局质量，包括：
+1. 布局算法效率评估
+2. 数据结构使用合理性
+3. 性能指标分析
+4. 优化建议
+
+请以JSON格式返回分析结果：
 {{
   "quality_score": 0.8,
   "area_utilization": 0.8,
@@ -1169,7 +1226,7 @@ class LLMManager:
   "metadata": {{"source": "llm_analysis", "timestamp": "2024-07-10T12:00:00Z", "version": "1.0"}}
 }}
 
-仅返回JSON，无其他文本。"""
+请确保回复是具体的技术分析，这是计算机科学和编程问题。"""
         return prompt
     
     def _parse_layout_analysis_response(self, response: str) -> Dict:
