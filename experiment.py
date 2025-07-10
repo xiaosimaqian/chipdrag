@@ -3329,14 +3329,16 @@ RL智能体选择的动作：
                         net_name = parts[1]
                         current_net = {'name': net_name, 'pins': []}
                         nets.append(current_net)
-                elif in_nets and current_net and '(' in line:
-                    # 解析引脚连接
-                    parts = line.split()
-                    for i, part in enumerate(parts):
-                        if part.startswith('(') and i + 1 < len(parts):
-                            comp_name = part.replace('(', '').strip()
-                            if comp_name in components:
-                                current_net['pins'].append(comp_name)
+                        
+                        # 在同一行中解析引脚连接
+                        # 格式: - net_name ( comp1 pin1 ) ( comp2 pin2 ) + USE SIGNAL ;
+                        for i, part in enumerate(parts):
+                            if part.startswith('(') and i + 2 < len(parts):
+                                comp_name = parts[i + 1]  # 组件名
+                                if comp_name in components:
+                                    current_net['pins'].append(comp_name)
+                                    if len(current_net['pins']) <= 3:  # 只记录前3个用于调试
+                                        logger.info(f"  网络 {net_name} 添加引脚: {comp_name}")
             
             logger.info(f"  解析了 {len(nets)} 个网络")
             
