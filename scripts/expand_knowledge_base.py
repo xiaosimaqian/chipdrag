@@ -30,7 +30,22 @@ class KnowledgeBaseExpander:
     def __init__(self):
         """初始化"""
         self.config_loader = ConfigLoader()
-        self.config = self.config_loader.load_config('knowledge_base.json')
+        
+        # 尝试加载配置文件，如果失败则使用默认配置
+        try:
+            self.config = self.config_loader.load_config('knowledge_base.json')
+        except Exception as e:
+            logger.warning(f"加载配置文件失败，使用默认配置: {str(e)}")
+            self.config = {
+                "path": "data/knowledge_base",
+                "format": "json",
+                "layout_experience": "data/knowledge_base",
+                "similarity": {
+                    "threshold": 0.5,
+                    "top_k": 5
+                }
+            }
+        
         self.knowledge_base = KnowledgeBase(self.config)
         
     def collect_real_cases(self) -> List[Dict]:

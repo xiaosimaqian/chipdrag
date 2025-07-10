@@ -1,0 +1,40 @@
+{
+  "name": "knowledge_base",
+  "version": "1.0.0",
+  "description": "知识库配置",
+  
+  "path": "data/knowledge_base",
+  "format": "json",
+  "layout_experience": "data/knowledge_base",
+  
+  "similarity": {
+    "threshold": 0.5,
+    "top_k": 5,
+    "weights": {
+      "num_components": 0.25,
+      "area": 0.20,
+      "component_density": 0.15,
+      "complexity": 0.15,
+      "hierarchy": 0.15,
+      "constraints": 0.10
+    }
+  },
+  
+  "features": {
+    "global_features": ["num_components", "area", "component_density", "complexity"],
+    "module_features": ["hierarchy", "constraints"],
+    "connection_features": ["nets", "pins"],
+    "constraint_features": ["timing", "power", "area"]
+  },
+  
+  "storage": {
+    "cases_file": "cases.json",
+    "graph_file": "knowledge_graph.pkl",
+    "metadata_file": "metadata.json"
+  },
+  
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  }
+} 
