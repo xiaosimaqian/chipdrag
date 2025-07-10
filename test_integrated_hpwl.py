@@ -165,25 +165,47 @@ def test_real_def_files():
     # 创建实验实例 - 使用服务器模式
     experiment = UnifiedPaperExperiment(mode="server")
     
-    # 查找测试用的DEF文件
+    # 查找测试用的DEF文件 - 检查多个可能的文件名和位置
+    dataset_dir = Path("dataset/ispd_2015_contest_benchmark")
     data_dir = Path("data/designs/ispd_2015_contest_benchmark")
-    if not data_dir.exists():
-        logger.error(f"数据目录不存在: {data_dir}")
-        return {}
     
-    # 查找所有DEF文件
     def_files = []
-    for design_dir in data_dir.iterdir():
-        if design_dir.is_dir():
-            # 查找placed.def
-            placed_def = design_dir / "placed.def"
-            if placed_def.exists():
-                def_files.append((placed_def, design_dir))
-            
-            # 查找floorplan.def
-            floorplan_def = design_dir / "floorplan.def"
-            if floorplan_def.exists():
-                def_files.append((floorplan_def, design_dir))
+    
+    # 定义可能的DEF文件名（按优先级排序）
+    possible_def_names = [
+        "placed.def",           # experiment.py生成的
+        "placement_result.def", # real_openroad_interface_fixed.py生成的
+        "final_layout.def",     # 其他脚本生成的
+        "floorplan.def"         # 初始未布局文件（用于对比）
+    ]
+    
+    # 首先检查dataset目录
+    if dataset_dir.exists():
+        for design_dir in dataset_dir.iterdir():
+            if design_dir.is_dir():
+                for def_name in possible_def_names:
+                    def_file = design_dir / def_name
+                    if def_file.exists():
+                        def_files.append((def_file, design_dir))
+                        logger.info(f"找到DEF文件: {def_file}")
+                        break  # 找到第一个就停止，避免重复
+    
+    # 如果dataset目录没有找到，则检查data目录
+    if not def_files and data_dir.exists():
+        for design_dir in data_dir.iterdir():
+            if design_dir.is_dir():
+                for def_name in possible_def_names:
+                    def_file = design_dir / def_name
+                    if def_file.exists():
+                        def_files.append((def_file, design_dir))
+                        logger.info(f"找到DEF文件: {def_file}")
+                        break  # 找到第一个就停止，避免重复
+    
+    if not def_files:
+        logger.error("未找到任何DEF文件")
+        logger.info("请确保OpenROAD布局脚本已运行并生成了DEF文件")
+        logger.info("可能的文件名: placed.def, placement_result.def, final_layout.def")
+        return {}
     
     if not def_files:
         logger.error("未找到任何DEF文件")
