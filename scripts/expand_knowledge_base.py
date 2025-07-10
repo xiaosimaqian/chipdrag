@@ -221,23 +221,52 @@ class KnowledgeBaseExpander:
                     # 解析组件数量
                     parts = line.split()
                     if len(parts) >= 2:
-                        num_components = int(parts[1])
+                        try:
+                            # 处理可能的括号格式
+                            comp_str = parts[1].strip('()')
+                            num_components = int(comp_str)
+                        except ValueError:
+                            logger.warning(f"无法解析组件数量: {parts[1]}")
+                            continue
                 elif line.startswith('DIEAREA'):
                     # 解析面积
                     parts = line.split()
                     if len(parts) >= 5:
-                        x1, y1, x2, y2 = map(int, parts[1:5])
-                        area = (x2 - x1) * (y2 - y1)
+                        try:
+                            # 处理可能的括号格式
+                            x1_str = parts[1].strip('()')
+                            y1_str = parts[2].strip('()')
+                            x2_str = parts[3].strip('()')
+                            y2_str = parts[4].strip('()')
+                            
+                            x1, y1, x2, y2 = map(int, [x1_str, y1_str, x2_str, y2_str])
+                            area = (x2 - x1) * (y2 - y1)
+                        except ValueError:
+                            logger.warning(f"无法解析DIEAREA坐标: {parts[1:5]}")
+                            continue
                 elif line.startswith('NETS'):
                     # 解析网络数量
                     parts = line.split()
                     if len(parts) >= 2:
-                        num_nets = int(parts[1])
+                        try:
+                            # 处理可能的括号格式
+                            nets_str = parts[1].strip('()')
+                            num_nets = int(nets_str)
+                        except ValueError:
+                            logger.warning(f"无法解析网络数量: {parts[1]}")
+                            continue
             
             # 计算密度
             density = 0
             if area > 0:
                 density = num_components / area
+            
+            # 验证数据有效性
+            if num_components == 0:
+                logger.warning(f"DEF文件中未找到有效组件数量: {def_file}")
+                return {}
+            
+            logger.info(f"解析DEF文件成功: 组件={num_components}, 面积={area}, 网络={num_nets}")
             
             return {
                 'num_components': num_components,

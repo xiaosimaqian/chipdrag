@@ -54,8 +54,8 @@ class LLMManager:
                 self.config['retry_delay'] = default_model.get('retry_delay', 5)
         else:
             # 兼容 'name' 字段为 'model'（只有在没有models配置时才使用）
-            if 'model' not in self.config and 'name' in self.config:
-                self.config['model'] = self.config['name']
+        if 'model' not in self.config and 'name' in self.config:
+            self.config['model'] = self.config['name']
         
         # 设置默认值（使用更适合的模型）
         default_config = {
@@ -1044,8 +1044,8 @@ class LLMManager:
                 num_components = design_analysis.get('num_components', 5000)
                 if num_components > 10000:
                     base_strategy = {
-                        'placement_strategy': 'hierarchical',
-                        'routing_strategy': 'timing_driven',
+                    'placement_strategy': 'hierarchical',
+                    'routing_strategy': 'timing_driven',
                         'optimization_priorities': ['wirelength', 'timing', 'power']
                     }
                 elif num_components > 5000:
@@ -1066,37 +1066,37 @@ class LLMManager:
                 'placement_strategy': base_strategy.get('placement_strategy', 'analytical'),
                 'routing_strategy': base_strategy.get('routing_strategy', 'timing_driven'),
                 'optimization_priorities': base_strategy.get('optimization_priorities', ['timing', 'wirelength', 'power']),
-                'parameter_suggestions': {
-                    'density_target': 0.7,
-                    'wirelength_weight': 1.0,
-                    'timing_weight': 0.8,
+                    'parameter_suggestions': {
+                        'density_target': 0.7,
+                        'wirelength_weight': 1.0,
+                        'timing_weight': 0.8,
                     'power_weight': 0.6,
                     'area_weight': 0.5
-                },
-                'constraint_handling': {
-                    'timing_constraints': 'aggressive',
-                    'power_constraints': 'moderate',
-                    'area_constraints': 'flexible'
-                },
-                'quality_targets': {
-                    'hpwl_improvement': 0.05,
-                    'timing_slack': 0.1,
+                    },
+                    'constraint_handling': {
+                        'timing_constraints': 'aggressive',
+                        'power_constraints': 'moderate',
+                        'area_constraints': 'flexible'
+                    },
+                    'quality_targets': {
+                        'hpwl_improvement': 0.05,
+                        'timing_slack': 0.1,
                     'power_reduction': 0.03,
                     'area_utilization': 0.8
-                },
-                'execution_plan': [
-                    'initial_placement',
-                    'timing_optimization',
-                    'power_optimization',
+                    },
+                    'execution_plan': [
+                        'initial_placement',
+                        'timing_optimization',
+                        'power_optimization',
                     'area_optimization',
-                    'final_legalization'
-                ],
-                'metadata': {
+                        'final_legalization'
+                    ],
+                    'metadata': {
                     'source': 'knowledge_based_strategy',
-                    'timestamp': datetime.now().isoformat(),
-                    'version': '1.0'
+                        'timestamp': datetime.now().isoformat(),
+                        'version': '1.0'
+                    }
                 }
-            }
             
             # 如果有优化指南，添加到策略中
             if 'optimization_guidelines' in knowledge:

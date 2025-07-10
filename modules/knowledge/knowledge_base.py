@@ -1522,13 +1522,18 @@ class KnowledgeBase:
             os.makedirs(path, exist_ok=True)
             
             # 优先尝试加载JSON格式的案例数据
-            if self.format == 'json' and os.path.exists(self.path):
-                try:
-                    with open(self.path, 'r', encoding='utf-8') as f:
-                        self.cases = json.load(f)
-                    logger.info(f"成功加载JSON案例数据，包含 {len(self.cases)} 个案例")
-                except Exception as e:
-                    logger.error(f"加载JSON案例数据失败: {str(e)}")
+            if self.format == 'json':
+                cases_file = os.path.join(path, "cases.json")
+                if os.path.exists(cases_file):
+                    try:
+                        with open(cases_file, 'r', encoding='utf-8') as f:
+                            self.cases = json.load(f)
+                        logger.info(f"成功加载JSON案例数据，包含 {len(self.cases)} 个案例")
+                    except Exception as e:
+                        logger.error(f"加载JSON案例数据失败: {str(e)}")
+                        self.cases = []
+                else:
+                    logger.warning(f"JSON案例文件不存在: {cases_file}")
                     self.cases = []
             
             # 如果JSON加载失败，尝试加载cases.pkl
