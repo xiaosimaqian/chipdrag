@@ -29,8 +29,9 @@ class KnowledgeBaseExpander:
     
     def __init__(self):
         """初始化"""
-        self.config = ConfigLoader.load_config()
-        self.knowledge_base = KnowledgeBase(self.config.get('knowledge_base', {}))
+        self.config_loader = ConfigLoader()
+        self.config = self.config_loader.load_config('knowledge_base.json')
+        self.knowledge_base = KnowledgeBase(self.config)
         
     def collect_real_cases(self) -> List[Dict]:
         """收集真实案例
@@ -396,7 +397,7 @@ class KnowledgeBaseExpander:
         logger.info(f"成功添加 {added_count} 个案例到知识库")
         
         # 保存知识库
-        self.knowledge_base.save("data/knowledge_base")
+        self.knowledge_base._save_data()
         logger.info("知识库扩充完成")
 
 def main():
