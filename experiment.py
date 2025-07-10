@@ -3248,15 +3248,36 @@ RL智能体选择的动作：
                         # 查找组件尺寸（通常在LEF文件中定义，这里使用默认值）
                         dx, dy = 1.0, 1.0  # 默认尺寸
                         
-                        # 查找PLACED位置
+                        # 查找PLACED位置 - 修正格式解析
+                        # 格式: - component_name cell_type + PLACED ( x y ) orientation ;
                         for i, part in enumerate(parts):
-                            if any(placed in part for placed in ['PLACED', 'FIXED', 'COVER']):
+                            if part == 'PLACED':
                                 try:
-                                    # 查找坐标 - 修正格式解析
-                                    # 格式: + PLACED ( x y ) orientation
+                                    # 查找坐标 - 下一个部分应该是 ( x y )
                                     if i + 1 < len(parts) and parts[i + 1].startswith('('):
                                         coord_part = parts[i + 1]
                                         # 提取坐标: ( x y )
+                                        coord_match = re.search(r'\(([^)]+)\)', coord_part)
+                                        if coord_match:
+                                            coords = coord_match.group(1).split()
+                                            if len(coords) >= 2:
+                                                lx = float(coords[0])
+                                                ly = float(coords[1])
+                                                
+                                                components[comp_name] = {
+                                                    'dx': dx, 'dy': dy,
+                                                    'lx': lx, 'ly': ly
+                                                }
+                                                placed_count += 1
+                                                break
+                                except (ValueError, IndexError) as e:
+                                    logger.debug(f"  解析组件 {comp_name} 坐标失败: {e}")
+                                    continue
+                            elif part in ['FIXED', 'COVER']:
+                                # 处理FIXED和COVER组件
+                                try:
+                                    if i + 1 < len(parts) and parts[i + 1].startswith('('):
+                                        coord_part = parts[i + 1]
                                         coord_match = re.search(r'\(([^)]+)\)', coord_part)
                                         if coord_match:
                                             coords = coord_match.group(1).split()
