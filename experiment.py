@@ -3248,6 +3248,11 @@ RL智能体选择的动作：
                         # 查找组件尺寸（通常在LEF文件中定义，这里使用默认值）
                         dx, dy = 1.0, 1.0  # 默认尺寸
                         
+                        # 调试：检查前几个组件行
+                        if placed_count < 3:
+                            logger.debug(f"  解析组件行: {line}")
+                            logger.debug(f"  组件名: {comp_name}, 部分: {parts}")
+                        
                         # 查找PLACED位置 - 修正格式解析
                         # 格式: - component_name cell_type + PLACED ( x y ) orientation ;
                         for i, part in enumerate(parts):
@@ -3269,6 +3274,8 @@ RL智能体选择的动作：
                                                     'lx': lx, 'ly': ly
                                                 }
                                                 placed_count += 1
+                                                if placed_count <= 5:  # 只记录前5个用于调试
+                                                    logger.debug(f"  成功解析组件 {comp_name}: ({lx}, {ly})")
                                                 break
                                 except (ValueError, IndexError) as e:
                                     logger.debug(f"  解析组件 {comp_name} 坐标失败: {e}")
@@ -3290,6 +3297,8 @@ RL智能体选择的动作：
                                                     'lx': lx, 'ly': ly
                                                 }
                                                 placed_count += 1
+                                                if placed_count <= 5:  # 只记录前5个用于调试
+                                                    logger.debug(f"  成功解析组件 {comp_name}: ({lx}, {ly})")
                                                 break
                                 except (ValueError, IndexError) as e:
                                     logger.debug(f"  解析组件 {comp_name} 坐标失败: {e}")
