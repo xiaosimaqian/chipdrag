@@ -54,8 +54,8 @@ class LLMManager:
                 self.config['retry_delay'] = default_model.get('retry_delay', 5)
         else:
             # 兼容 'name' 字段为 'model'（只有在没有models配置时才使用）
-        if 'model' not in self.config and 'name' in self.config:
-            self.config['model'] = self.config['name']
+            if 'model' not in self.config and 'name' in self.config:
+                self.config['model'] = self.config['name']
         
         # 设置默认值（使用更适合的模型）
         default_config = {
