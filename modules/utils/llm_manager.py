@@ -36,6 +36,7 @@ class LLMManager:
         self._validate_config()
         self._init_components()
         self.model = self.config.get('model') or self.config.get('name')  # 终极保险
+        self.current_model_type = 'default'  # 当前使用的模型类型
         
     def _validate_config(self):
         """验证配置"""
@@ -45,20 +46,26 @@ class LLMManager:
             default_model = self.config['models'].get('default', {})
             if default_model:
                 self.config['base_url'] = default_model.get('base_url', 'http://localhost:11434')
-                self.config['model'] = default_model.get('name', 'llama2:latest')
+                self.config['model'] = default_model.get('name', 'deepseek-coder:latest')
                 self.config['temperature'] = default_model.get('temperature', 0.7)
                 self.config['max_tokens'] = default_model.get('max_tokens', 1000)
+                self.config['timeout'] = default_model.get('timeout', 300)
+                self.config['retry_attempts'] = default_model.get('retry_attempts', 2)
+                self.config['retry_delay'] = default_model.get('retry_delay', 5)
         else:
             # 兼容 'name' 字段为 'model'（只有在没有models配置时才使用）
             if 'model' not in self.config and 'name' in self.config:
                 self.config['model'] = self.config['name']
         
-        # 设置默认值
+        # 设置默认值（使用更适合的模型）
         default_config = {
             'base_url': 'http://localhost:11434',
-            'model': 'llama2:latest',
+            'model': 'deepseek-coder:latest',
             'temperature': 0.7,
-            'max_tokens': 1000
+            'max_tokens': 1000,
+            'timeout': 300,
+            'retry_attempts': 2,
+            'retry_delay': 5
         }
         for key, value in default_config.items():
             if key not in self.config:
@@ -108,44 +115,82 @@ class LLMManager:
             self.tokenizer = None
             self.model = None
         
-    def generate(self, prompt: str) -> str:
+    def generate(self, prompt: str, model_type: str = 'default') -> str:
         """通用的生成方法，供外部调用
         
         Args:
             prompt: 输入提示
+            model_type: 模型类型 ('default', 'code', 'layout')
             
         Returns:
             str: 生成的响应
         """
-        return self._call_ollama(prompt, "strategy_generation")
+        return self._call_ollama(prompt, "strategy_generation", model_type)
     
-    def _call_ollama(self, prompt: str, interaction_type: str = "general") -> str:
+    def select_optimal_model(self, task_type: str) -> str:
+        """为不同任务选择最优模型
+        
+        Args:
+            task_type: 任务类型
+            
+        Returns:
+            str: 推荐的模型类型
+        """
+        task_model_mapping = {
+            'code_generation': 'code',
+            'layout_strategy': 'layout', 
+            'design_analysis': 'code',
+            'optimization': 'layout',
+            'explanation': 'default',
+            'conversation': 'default'
+        }
+        
+        return task_model_mapping.get(task_type, 'default')
+    
+    def _get_model_config(self, model_type: str) -> Dict[str, Any]:
+        """获取指定模型类型的配置
+        
+        Args:
+            model_type: 模型类型
+            
+        Returns:
+            Dict: 模型配置
+        """
+        if 'models' in self.config and model_type in self.config['models']:
+            return self.config['models'][model_type]
+        elif 'models' in self.config and 'default' in self.config['models']:
+            return self.config['models']['default']
+        else:
+            return self.config
+    
+    def _call_ollama(self, prompt: str, interaction_type: str = "general", model_type: str = "default") -> str:
         """调用Ollama API
         
         Args:
             prompt: 提示文本
             interaction_type: 交互类型，用于日志记录
+            model_type: 模型类型，用于选择合适的模型配置
             
         Returns:
             str: API响应
         """
+        # 根据模型类型选择配置
+        model_config = self._get_model_config(model_type)
+        current_model = model_config.get('name', self.model)
+        current_temperature = model_config.get('temperature', self.temperature)
+        current_max_tokens = model_config.get('max_tokens', self.max_tokens)
+        
         # 添加调试日志
-        logger.info(f"Ollama调用模型: {self.model}, base_url: {self.base_url}")
+        logger.info(f"Ollama调用模型: {current_model}, base_url: {self.base_url}, 类型: {model_type}")
         
         # 记录查询内容
         logger.info(f"=== LLM {interaction_type.upper()} 查询 ===")
         logger.info(f"查询内容:\n{prompt}")
         
-        # 从配置中获取超时和重试设置
-        timeout = self.config.get('timeout', 180)
-        max_retries = self.config.get('retry_attempts', 3)
-        retry_delay = self.config.get('retry_delay', 3)
-        
-        # 如果配置中有models.default的超时设置，优先使用
-        if 'models' in self.config and 'default' in self.config['models']:
-            timeout = self.config['models']['default'].get('timeout', timeout)
-            max_retries = self.config['models']['default'].get('retry_attempts', max_retries)
-            retry_delay = self.config['models']['default'].get('retry_delay', retry_delay)
+        # 从模型配置中获取超时和重试设置
+        timeout = model_config.get('timeout', self.config.get('timeout', 300))
+        max_retries = model_config.get('retry_attempts', self.config.get('retry_attempts', 2))
+        retry_delay = model_config.get('retry_delay', self.config.get('retry_delay', 5))
         
         logger.info(f"使用超时设置: {timeout}秒, 重试次数: {max_retries}")
         
@@ -156,10 +201,10 @@ class LLMManager:
                 response = requests.post(
                     f"{self.base_url}/api/generate",
                     json={
-                        "model": self.model,
+                        "model": current_model,
                         "prompt": prompt,
-                        "temperature": self.temperature,
-                        "max_tokens": self.max_tokens,
+                        "temperature": current_temperature,
+                        "max_tokens": current_max_tokens,
                         "stream": False
                     },
                     timeout=timeout  # 使用配置的超时时间

@@ -1,0 +1,152 @@
+{
+    "name": "multimodal_config",
+    "version": "1.0.0",
+    "description": "多模态模型配置 - 为不同任务选择最优模型",
+    
+    "llm_models": {
+        "default": {
+            "name": "deepseek-coder:latest",
+            "description": "默认代码生成模型",
+            "base_url": "http://localhost:11434",
+            "temperature": 0.7,
+            "max_tokens": 1000,
+            "timeout": 300,
+            "retry_attempts": 2,
+            "retry_delay": 5,
+            "concurrent_friendly": true
+        },
+        "fast": {
+            "name": "qwen:7b",
+            "description": "快速推理模型，支持更好的并发",
+            "base_url": "http://localhost:11434",
+            "temperature": 0.5,
+            "max_tokens": 800,
+            "timeout": 120,
+            "retry_attempts": 2,
+            "retry_delay": 3,
+            "concurrent_friendly": true
+        },
+        "code": {
+            "name": "deepseek-coder:latest",
+            "description": "代码生成和分析专用模型",
+            "base_url": "http://localhost:11434",
+            "temperature": 0.2,
+            "max_tokens": 2000,
+            "timeout": 300,
+            "retry_attempts": 2,
+            "retry_delay": 5,
+            "concurrent_friendly": true
+        },
+        "layout": {
+            "name": "deepseek-coder:latest",
+            "description": "布局策略生成专用模型",
+            "base_url": "http://localhost:11434",
+            "temperature": 0.3,
+            "max_tokens": 1500,
+            "timeout": 300,
+            "retry_attempts": 2,
+            "retry_delay": 5,
+            "concurrent_friendly": true
+        },
+        "conversation": {
+            "name": "qwen:7b",
+            "description": "对话和解释专用模型",
+            "base_url": "http://localhost:11434",
+            "temperature": 0.8,
+            "max_tokens": 1000,
+            "timeout": 180,
+            "retry_attempts": 2,
+            "retry_delay": 3,
+            "concurrent_friendly": true
+        }
+    },
+    
+    "multimodal_encoders": {
+        "text_encoder": {
+            "name": "bert-base-uncased",
+            "type": "text",
+            "description": "文本编码器 - 用于设计描述和约束文本",
+            "model_path": "models/bert-base-uncased",
+            "embedding_dim": 768,
+            "max_length": 512,
+            "batch_size": 32,
+            "device": "auto"
+        },
+        "image_encoder": {
+            "name": "resnet50",
+            "type": "image",
+            "description": "图像编码器 - 用于布局图像特征提取",
+            "model_path": "models/resnet50",
+            "embedding_dim": 2048,
+            "input_size": [224, 224],
+            "batch_size": 16,
+            "device": "auto"
+        },
+        "graph_encoder": {
+            "name": "graph_sage",
+            "type": "graph",
+            "description": "图编码器 - 用于电路拓扑关系",
+            "model_path": "models/graph_sage",
+            "embedding_dim": 256,
+            "num_layers": 3,
+            "batch_size": 8,
+            "device": "auto"
+        }
+    },
+    
+    "task_model_mapping": {
+        "code_generation": {
+            "primary": "code",
+            "fallback": "default",
+            "description": "代码生成任务"
+        },
+        "layout_strategy": {
+            "primary": "layout",
+            "fallback": "code",
+            "description": "布局策略生成任务"
+        },
+        "design_analysis": {
+            "primary": "code",
+            "fallback": "default",
+            "description": "设计分析任务"
+        },
+        "optimization": {
+            "primary": "layout",
+            "fallback": "code",
+            "description": "优化任务"
+        },
+        "explanation": {
+            "primary": "conversation",
+            "fallback": "fast",
+            "description": "解释和对话任务"
+        },
+        "fast_inference": {
+            "primary": "fast",
+            "fallback": "conversation",
+            "description": "快速推理任务"
+        }
+    },
+    
+    "concurrent_settings": {
+        "max_concurrent_requests": 2,
+        "timeout_policy": "graceful_degradation",
+        "retry_strategy": "exponential_backoff",
+        "circuit_breaker": {
+            "failure_threshold": 5,
+            "recovery_timeout": 60,
+            "half_open_max_calls": 3
+        }
+    },
+    
+    "performance_monitoring": {
+        "enabled": true,
+        "metrics": [
+            "response_time",
+            "token_throughput",
+            "error_rate",
+            "concurrent_requests",
+            "model_utilization"
+        ],
+        "log_level": "INFO"
+    }
+} 

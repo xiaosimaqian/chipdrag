@@ -57,6 +57,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import psutil
 import re
+from threading import Semaphore
 
 # 安全导入numpy和相关包
 try:
@@ -192,10 +193,15 @@ class UnifiedPaperExperiment:
         if self.mode == "local":
             self.max_parallel_designs = 1  # 本地模式使用单任务以确保内存充足
             self.max_parallel_containers = 1
+            self.llm_concurrent_limit = 1  # 本地模式LLM并发限制
+            self.llm_semaphore = Semaphore(self.llm_concurrent_limit)
             logger.info("本地模式：使用单任务模式以确保Docker容器获得足够内存")
         else:  # server mode
             # 服务器模式：加载性能配置并充分利用硬件资源
             self._configure_server_performance()
+            # LLM并发限制：Ollama实际并发能力有限，避免同时发送过多请求
+            self.llm_concurrent_limit = 2  # 限制同时进行的LLM请求数
+            self.llm_semaphore = Semaphore(self.llm_concurrent_limit)  # LLM请求信号量
         
         # 加载配置
         self._load_experiment_config()
@@ -1617,7 +1623,7 @@ puts "=== 布局完成 ==="
         else:
             base_aspect_ratio = 1.0
         
-        # 2. 使用LLM进行智能策略分析和优化
+        # 2. 使用LLM进行智能策略分析和优化（带并发控制）
         try:
             logger.info("使用LLM分析检索案例并生成智能布局策略...")
             
@@ -1688,8 +1694,14 @@ RL智能体选择的动作：
 }}
 """
             
-            # 调用LLM
-            llm_response = self.llm_manager.generate(prompt)
+            # 获取LLM请求许可（并发控制）
+            self.llm_semaphore.acquire()
+            try:
+                # 调用LLM - 使用布局策略专用模型
+                model_type = self.llm_manager.select_optimal_model('layout_strategy')
+                llm_response = self.llm_manager.generate(prompt, model_type)
+            finally:
+                self.llm_semaphore.release()
             
             # 解析LLM响应
             if llm_response and isinstance(llm_response, str):

@@ -4,7 +4,7 @@ import torch
 from typing import Dict, List, Any, Optional
 import logging
 import numpy as np
-from ..encoders import ResNetImageEncoder, BertTextEncoder, KGEncoder
+from ..encoders.multimodal_encoder_manager import MultiModalEncoderManager
 from .multimodal_fusion import MultimodalFusion
 
 logger = logging.getLogger(__name__)
@@ -20,10 +20,8 @@ class MultimodalRetriever:
         """
         self.config = config
         
-        # 初始化编码器
-        self.image_encoder = ResNetImageEncoder(config.get('image_encoder', {}))
-        self.text_encoder = BertTextEncoder(config.get('text_encoder', {}))
-        self.graph_encoder = KGEncoder(config.get('graph_encoder', {}))
+        # 使用新的多模态编码器管理器
+        self.encoder_manager = MultiModalEncoderManager()
         
         # 设置权重
         self.weights = {
@@ -107,19 +105,19 @@ class MultimodalRetriever:
             
             # 编码文本
             if 'text' in query and query['text']:
-                text_encoding = self.text_encoder.encode(query['text'])
+                text_encoding = self.encoder_manager.encode_text(query['text'])
                 self._validate_encoding(text_encoding, 'text')
                 encodings['text'] = text_encoding
                 
             # 编码图像
             if 'image' in query and query['image']:
-                image_encoding = self.image_encoder.encode(query['image'])
+                image_encoding = self.encoder_manager.encode_image(query['image'])
                 self._validate_encoding(image_encoding, 'image')
                 encodings['image'] = image_encoding
                 
             # 编码知识图谱
             if 'graph' in query and query['graph']:
-                graph_encoding = self.graph_encoder.encode(query['graph'])
+                graph_encoding = self.encoder_manager.encode_graph(query['graph'])
                 self._validate_encoding(graph_encoding, 'graph')
                 encodings['graph'] = graph_encoding
                 

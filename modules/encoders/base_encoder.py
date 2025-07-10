@@ -21,35 +21,50 @@ def get_system_config_path():
 class BaseEncoder(ABC):
     """编码器基类"""
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], device: torch.device = None):
         """初始化编码器
         
         Args:
             config: 配置字典
+            device: 计算设备（可选）
         """
         self.config = config
         
-        # 读取系统配置
-        system_config_path = get_system_config_path()
-        with open(system_config_path, 'r') as f:
-            system_config = json.load(f)
-            
-        device_config = system_config.get('device', {})
-        device_type = device_config.get('type', 'cuda')
-        device_index = device_config.get('index', 0)
-        fallback_to_cpu = device_config.get('fallback_to_cpu', True)
-        
-        if device_type == 'cuda' and torch.cuda.is_available():
-            self.device = torch.device(f'cuda:{device_index}')
-            logger.info(f"使用GPU设备: {self.device}")
+        # 如果提供了设备，使用提供的设备；否则使用系统配置
+        if device is not None:
+            self.device = device
         else:
-            if fallback_to_cpu:
-                self.device = torch.device('cpu')
-                logger.info(f"GPU不可用，使用CPU设备: {self.device}")
-            else:
-                raise RuntimeError("GPU不可用且不允许回退到CPU")
+            # 读取系统配置
+            try:
+                system_config_path = get_system_config_path()
+                with open(system_config_path, 'r') as f:
+                    system_config = json.load(f)
+                    
+                device_config = system_config.get('device', {})
+                device_type = device_config.get('type', 'cuda')
+                device_index = device_config.get('index', 0)
+                fallback_to_cpu = device_config.get('fallback_to_cpu', True)
                 
+                if device_type == 'cuda' and torch.cuda.is_available():
+                    self.device = torch.device(f'cuda:{device_index}')
+                    logger.info(f"使用GPU设备: {self.device}")
+                else:
+                    if fallback_to_cpu:
+                        self.device = torch.device('cpu')
+                        logger.info(f"GPU不可用，使用CPU设备: {self.device}")
+                    else:
+                        raise RuntimeError("GPU不可用且不允许回退到CPU")
+            except Exception as e:
+                logger.warning(f"读取系统配置失败: {e}，使用默认设备")
+                self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                
+        # 基本属性
         self.model = None
+        self.embedding_dim = config.get('embedding_dim', 768)
+        self.batch_size = config.get('batch_size', 32)
+        self.encoder_type = config.get('type', 'base')
+        self._initialized = False
+        
         self._init_model()
         
     @abstractmethod
@@ -92,3 +107,19 @@ class BaseEncoder(ABC):
             float: 相似度分数
         """
         return torch.nn.functional.cosine_similarity(vec1, vec2, dim=0).item()
+    
+    def is_initialized(self) -> bool:
+        """检查编码器是否已初始化
+        
+        Returns:
+            bool: 是否已初始化
+        """
+        return self._initialized
+    
+    def get_embedding_dim(self) -> int:
+        """获取嵌入维度
+        
+        Returns:
+            int: 嵌入维度
+        """
+        return self.embedding_dim

@@ -1,0 +1,49 @@
+# 忽略模型文件
+*.pt
+*.pth
+*.bin
+*.ckpt
+*.h5
+*.hdf5
+
+# 忽略缓存文件
+*/__pycache__/*
+*.py[cod]
+*$py.class
+
+# 忽略日志文件
+*.log
+
+# 忽略临时文件
+*.docx
+*.tmp
+*.temp
+*.pdf
+*.aux
+*.toc
+logs/*
+*/logs/*
+data/*
+dataset/*
+models/*
+results/*
+output/*
+reports/*
+temp/*
+bert-base-chinese/*
+layout_experience/*
+*.tex
+*.bbl
+*.bib
+*.synctex.gz
+*.synctex*
+*.pdf
+real_paper_results/*
+real_experiment_output/*
+IEEE-conference-template-062824/*
+paper_hpwl_results/*
+*.txt
+*.png
+paper_hpwl_results*/
+paper_ablation_results*/
+single_test_result*/
