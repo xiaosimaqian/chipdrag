@@ -1033,6 +1033,12 @@ class UnifiedPaperExperiment:
         strategy_type = layout_strategy.get('strategy_type', 'basic')
         llm_reasoning = layout_strategy.get('llm_reasoning', '')
         
+        # 预处理LLM分析理由（避免f-string中的反斜杠）
+        llm_reasoning_line = ""
+        if llm_reasoning:
+            escaped_reasoning = llm_reasoning.replace('"', '\\"')
+            llm_reasoning_line = f'puts "LLM分析理由: {escaped_reasoning}"'
+        
         return f"""
 # === Docker模式OpenROAD布局脚本 ===
 puts "=== Docker模式OpenROAD布局脚本 ==="
@@ -1046,7 +1052,7 @@ puts "利用率: {utilization:.3f}"
 puts "长宽比: {aspect_ratio:.3f}"
 puts "布局密度: {placement_density:.3f}"
 puts "溢出阈值: {overflow_threshold:.3f}"
-{"puts \"LLM分析理由: " + llm_reasoning.replace('"', '\\"') + "\"" if llm_reasoning else ""}
+{llm_reasoning_line}
 
 # 设置线程数
 if {{[info exists ::env(OPENROAD_NUM_THREADS)]}} {{
@@ -1129,6 +1135,12 @@ puts "=== 布局完成 ==="
         strategy_type = layout_strategy.get('strategy_type', 'basic')
         llm_reasoning = layout_strategy.get('llm_reasoning', '')
         
+        # 预处理LLM分析理由（避免f-string中的反斜杠）
+        llm_reasoning_line = ""
+        if llm_reasoning:
+            escaped_reasoning = llm_reasoning.replace('"', '\\"')
+            llm_reasoning_line = f'puts "LLM分析理由: {escaped_reasoning}"'
+        
         return f"""
 # === 服务器模式OpenROAD布局脚本 ===
 puts "=== 服务器模式OpenROAD布局脚本 ==="
@@ -1142,7 +1154,7 @@ puts "利用率: {utilization:.3f}"
 puts "长宽比: {aspect_ratio:.3f}"
 puts "布局密度: {placement_density:.3f}"
 puts "溢出阈值: {overflow_threshold:.3f}"
-{"puts \"LLM分析理由: " + llm_reasoning.replace('"', '\\"') + "\"" if llm_reasoning else ""}
+{llm_reasoning_line}
 
 # 设置线程数
 set_thread_count {threads}
