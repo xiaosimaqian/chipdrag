@@ -3259,47 +3259,43 @@ RL智能体选择的动作：
                             if part == 'PLACED':
                                 try:
                                     # 查找坐标 - 下一个部分应该是 ( x y )
-                                    if i + 1 < len(parts) and parts[i + 1].startswith('('):
-                                        coord_part = parts[i + 1]
-                                        # 提取坐标: ( x y )
-                                        coord_match = re.search(r'\(([^)]+)\)', coord_part)
-                                        if coord_match:
-                                            coords = coord_match.group(1).split()
-                                            if len(coords) >= 2:
-                                                lx = float(coords[0])
-                                                ly = float(coords[1])
-                                                
-                                                components[comp_name] = {
-                                                    'dx': dx, 'dy': dy,
-                                                    'lx': lx, 'ly': ly
-                                                }
-                                                placed_count += 1
-                                                if placed_count <= 5:  # 只记录前5个用于调试
-                                                    logger.debug(f"  成功解析组件 {comp_name}: ({lx}, {ly})")
-                                                break
+                                    if i + 1 < len(parts) and parts[i + 1] == '(':
+                                        # 坐标在 ( x y ) 格式中
+                                        if i + 4 < len(parts):  # 确保有足够的部分
+                                            x_str = parts[i + 2]  # x坐标
+                                            y_str = parts[i + 3]  # y坐标
+                                            lx = float(x_str)
+                                            ly = float(y_str)
+                                            
+                                            components[comp_name] = {
+                                                'dx': dx, 'dy': dy,
+                                                'lx': lx, 'ly': ly
+                                            }
+                                            placed_count += 1
+                                            if placed_count <= 5:  # 只记录前5个用于调试
+                                                logger.info(f"  成功解析组件 {comp_name}: ({lx}, {ly})")
+                                            break
                                 except (ValueError, IndexError) as e:
                                     logger.debug(f"  解析组件 {comp_name} 坐标失败: {e}")
                                     continue
                             elif part in ['FIXED', 'COVER']:
                                 # 处理FIXED和COVER组件
                                 try:
-                                    if i + 1 < len(parts) and parts[i + 1].startswith('('):
-                                        coord_part = parts[i + 1]
-                                        coord_match = re.search(r'\(([^)]+)\)', coord_part)
-                                        if coord_match:
-                                            coords = coord_match.group(1).split()
-                                            if len(coords) >= 2:
-                                                lx = float(coords[0])
-                                                ly = float(coords[1])
-                                                
-                                                components[comp_name] = {
-                                                    'dx': dx, 'dy': dy,
-                                                    'lx': lx, 'ly': ly
-                                                }
-                                                placed_count += 1
-                                                if placed_count <= 5:  # 只记录前5个用于调试
-                                                    logger.debug(f"  成功解析组件 {comp_name}: ({lx}, {ly})")
-                                                break
+                                    if i + 1 < len(parts) and parts[i + 1] == '(':
+                                        if i + 4 < len(parts):
+                                            x_str = parts[i + 2]
+                                            y_str = parts[i + 3]
+                                            lx = float(x_str)
+                                            ly = float(y_str)
+                                            
+                                            components[comp_name] = {
+                                                'dx': dx, 'dy': dy,
+                                                'lx': lx, 'ly': ly
+                                            }
+                                            placed_count += 1
+                                            if placed_count <= 5:  # 只记录前5个用于调试
+                                                logger.info(f"  成功解析组件 {comp_name}: ({lx}, {ly})")
+                                            break
                                 except (ValueError, IndexError) as e:
                                     logger.debug(f"  解析组件 {comp_name} 坐标失败: {e}")
                                     continue
