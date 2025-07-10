@@ -239,13 +239,14 @@ class KnowledgeBaseExpander:
                             x1, y1, x2, y2 = map(int, match.groups())
                             area = (x2 - x1) * (y2 - y1)
                         else:
-                            # 备用解析方法
+                            # 备用解析方法 - 处理实际格式: DIEAREA ( 0 0 ) ( 5060310 5060310 ) ;
                             parts = line.split()
-                            if len(parts) >= 7:  # DIEAREA ( x1 y1 ) ( x2 y2 ) ;
-                                x1 = int(parts[1].strip('()'))
-                                y1 = int(parts[2].strip('()'))
-                                x2 = int(parts[4].strip('()'))
-                                y2 = int(parts[5].strip('()'))
+                            if len(parts) >= 9:  # DIEAREA ( x1 y1 ) ( x2 y2 ) ;
+                                # 直接提取坐标: parts = ['DIEAREA', '(', '0', '0', ')', '(', '5060310', '5060310', ')', ';']
+                                x1 = int(parts[2])  # 0
+                                y1 = int(parts[3])  # 0
+                                x2 = int(parts[6])  # 5060310
+                                y2 = int(parts[7])  # 5060310
                                 area = (x2 - x1) * (y2 - y1)
                             else:
                                 raise ValueError(f"DIEAREA格式不正确: {line}")
