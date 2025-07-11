@@ -128,12 +128,14 @@ class KnowledgeBase:
             raise
             
     def _load_data(self) -> List[Dict]:
-        """加载知识库数据（改进版，支持扩充案例）
+        """加载知识库数据（分布式加载版本）
         
         Returns:
-            List[Dict]: 知识列表
+            List[Dict]: 合并后的知识列表
         """
         try:
+            all_knowledge = []
+            
             # 1. 优先加载扩充的案例数据
             enhanced_cases_file = "data/enhanced_cases/enhanced_cases.json"
             if os.path.exists(enhanced_cases_file):
@@ -144,52 +146,93 @@ class KnowledgeBase:
                     logger.info(f"成功加载 {len(enhanced_data)} 个扩充案例")
                     
                     # 转换扩充案例格式
-                    converted_cases = []
                     for case in enhanced_data:
                         converted_case = {
-                            'id': case.get('id', len(converted_cases)),
+                            'id': case.get('id', len(all_knowledge)),
                             'layout': case.get('def_info', {}),
                             'optimization_result': case.get('optimization_result', {}),
                             'metadata': case.get('metadata', {}),
                             'def_info': case.get('def_info', {}),
                             'lef_info': case.get('lef_info', {}),
                             'features': case.get('features', {}),
-                            'timestamp': case.get('metadata', {}).get('timestamp', '2025-07-11')
+                            'timestamp': case.get('metadata', {}).get('timestamp', '2025-07-11'),
+                            'source': 'enhanced_cases'
                         }
-                        converted_cases.append(converted_case)
-                    
-                    return converted_cases
+                        all_knowledge.append(converted_case)
                 except Exception as e:
                     logger.error(f"加载扩充案例数据失败: {str(e)}")
             
-            # 2. 尝试加载layout_experience/cases.pkl（扩展的151个案例）
+            # 2. 扫描knowledge_base目录下的所有json文件
+            kb_dir = Path("data/knowledge_base")
+            if kb_dir.exists():
+                logger.info(f"扫描知识库目录: {kb_dir}")
+                
+                # 递归查找所有json文件
+                json_files = list(kb_dir.rglob("*.json"))
+                logger.info(f"找到 {len(json_files)} 个知识库文件")
+                
+                for json_file in json_files:
+                    try:
+                        logger.info(f"加载知识库文件: {json_file}")
+                        with open(json_file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                        
+                        # 根据文件类型处理数据
+                        if isinstance(data, list):
+                            # 列表格式：直接添加所有元素
+                            for i, item in enumerate(data):
+                                if isinstance(item, dict):
+                                    # 确保每个案例有唯一ID和来源标记
+                                    item['id'] = item.get('id', len(all_knowledge) + i)
+                                    item['source'] = str(json_file.relative_to(kb_dir))
+                                    all_knowledge.append(item)
+                        elif isinstance(data, dict):
+                            # 字典格式：作为单个案例添加
+                            data['id'] = len(all_knowledge)
+                            data['source'] = str(json_file.relative_to(kb_dir))
+                            all_knowledge.append(data)
+                        
+                        logger.info(f"从 {json_file.name} 加载了 {len(data) if isinstance(data, list) else 1} 个知识项")
+                        
+                    except Exception as e:
+                        logger.warning(f"加载知识库文件 {json_file} 失败: {str(e)}")
+                        continue
+            
+            # 3. 尝试加载layout_experience/cases.pkl（扩展的151个案例）
             layout_cases_file = os.path.join(self.layout_experience_path, "cases.pkl")
             if os.path.exists(layout_cases_file) and os.path.getsize(layout_cases_file) > 1000:
                 logger.info(f"加载扩展案例数据: {layout_cases_file}")
                 with open(layout_cases_file, 'rb') as f:
                     data = pickle.load(f)
                 logger.info(f"成功加载 {len(data)} 个扩展案例")
-                return data
-            
-            # 3. 尝试加载cases.pkl（真实ISPD数据）
-            cases_file = os.path.join(self.layout_experience_path, "cases.pkl")
-            if os.path.exists(cases_file) and os.path.getsize(cases_file) > 1000:  # 确保文件有实际内容
-                logger.info(f"加载真实ISPD案例数据: {cases_file}")
-                with open(cases_file, 'rb') as f:
-                    data = pickle.load(f)
-                logger.info(f"成功加载 {len(data)} 个真实ISPD案例")
-                return data
+                
+                for i, item in enumerate(data):
+                    if isinstance(item, dict):
+                        item['id'] = len(all_knowledge) + i
+                        item['source'] = 'layout_experience/cases.pkl'
+                        all_knowledge.append(item)
             
             # 4. 如果cases.pkl不存在或为空，尝试加载JSON格式的案例数据
             if self.format == 'json' and os.path.exists(self.path):
-                logger.info(f"加载JSON格式案例数据: {self.path}")
+                logger.info(f"加载主知识库文件: {self.path}")
                 try:
                     with open(self.path, 'r', encoding='utf-8') as f:
                         data = json.load(f)
-                    logger.info(f"成功加载 {len(data)} 个JSON案例")
-                    return data
+                    
+                    if isinstance(data, list):
+                        for i, item in enumerate(data):
+                            if isinstance(item, dict):
+                                item['id'] = len(all_knowledge) + i
+                                item['source'] = 'main_cases.json'
+                                all_knowledge.append(item)
+                    elif isinstance(data, dict):
+                        data['id'] = len(all_knowledge)
+                        data['source'] = 'main_cases.json'
+                        all_knowledge.append(data)
+                        
+                    logger.info(f"从主知识库加载了 {len(data) if isinstance(data, list) else 1} 个知识项")
                 except Exception as e:
-                    logger.error(f"加载JSON案例数据失败: {str(e)}")
+                    logger.error(f"加载主知识库文件失败: {str(e)}")
             
             # 5. 如果JSON加载失败，尝试加载data.pkl
             if os.path.exists(self.data_file):
@@ -197,21 +240,26 @@ class KnowledgeBase:
                 # 检查文件大小
                 if os.path.getsize(self.data_file) == 0:
                     logger.info("知识库文件为空")
-                    return []
+                else:
+                    # 加载数据
+                    with open(self.data_file, 'rb') as f:
+                        data = pickle.load(f)
                     
-                # 加载数据
-                with open(self.data_file, 'rb') as f:
-                    data = pickle.load(f)
+                    # 确保返回的是列表
+                    if data is None:
+                        data = []
                     
-                # 确保返回的是列表
-                if data is None:
-                    return []
-                
-                logger.info(f"从data.pkl加载了 {len(data)} 个案例")
-                return data
-            else:
-                logger.info(f"知识库文件不存在: {self.data_file}")
-                return []
+                    for i, item in enumerate(data):
+                        if isinstance(item, dict):
+                            item['id'] = len(all_knowledge) + i
+                            item['source'] = 'data.pkl'
+                            all_knowledge.append(item)
+                    
+                    logger.info(f"从data.pkl加载了 {len(data)} 个案例")
+            
+            logger.info(f"知识库加载完成，总共 {len(all_knowledge)} 个知识项")
+            return all_knowledge
+            
         except Exception as e:
             logger.error(f"加载知识库数据失败: {str(e)}")
             return []

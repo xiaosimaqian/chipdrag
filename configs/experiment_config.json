@@ -15,9 +15,8 @@
         "ablation_study": true
     },
     "knowledge_base": {
-        "path": "data/knowledge_base",
-        "format": "pkl",
-        "layout_experience": "data/knowledge_base",
+        "format": "json",
+        "path": "data/knowledge_base/cases.json",
         "similarity_threshold": 0.5,
         "top_k": 5,
         "feature_weights": {

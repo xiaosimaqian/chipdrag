@@ -33,6 +33,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def convert_np(obj):
+    import numpy as np
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    raise TypeError
+
 class SimpleExperiment:
     """简化版实验类"""
     
@@ -43,7 +53,8 @@ class SimpleExperiment:
         self.results_dir.mkdir(exist_ok=True)
         
         # 加载配置
-        self.config = ConfigLoader.load_config("configs/experiment_config.json")
+        self.config_loader = ConfigLoader()
+        self.config = self.config_loader.load_config("experiment_config.json")
         
         # 初始化组件
         self._init_components()
@@ -77,8 +88,7 @@ class SimpleExperiment:
             self.state_extractor = StateExtractor(state_config)
             
             # 动态检索器
-            rag_config = self.config.get('knowledge_base', {})
-            self.retriever = DynamicRAGRetriever(rag_config)
+            self.retriever = DynamicRAGRetriever(self.config)
             
             logger.info("✅ 实验组件初始化成功")
             
@@ -165,23 +175,30 @@ class SimpleExperiment:
                     
                     # 更新RL智能体
                     next_state = self._calculate_next_state(state, action, reward, design_info)
-                    self.rl_agent.update(state, action, reward, next_state)
+                    # 将字典格式的action转换为Action对象
+                    from modules.core.rl_agent import Action
+                    action_obj = Action(
+                        k_value=action["k_value"],
+                        confidence=action["confidence"],
+                        exploration_type=action["exploration_type"]
+                    )
+                    self.rl_agent.update(state, action_obj, reward, next_state)
                     
                     # 记录训练数据
                     episode_data = {
                         'design': design_name,
                         'episode': episode + 1,
                         'action': {
-                            'k_value': action.get('k_value', 5),
-                            'confidence': action.get('confidence', 0.8),
-                            'exploration_type': action.get('exploration_type', 'exploit')
+                            'k_value': action["k_value"] if "k_value" in action else 5,
+                            'confidence': action["confidence"] if "confidence" in action else 0.8,
+                            'exploration_type': action["exploration_type"] if "exploration_type" in action else 'exploit'
                         },
                         'reward': reward,
                         'retrieved_count': len(retrieved_cases)
                     }
                     training_results['episodes'].append(episode_data)
                     
-                    logger.info(f"    动作: k={action.get('k_value', 5)}, 奖励: {reward:.3f}")
+                    logger.info(f"    动作: k={action['k_value']}, 奖励: {reward:.3f}")
             
             except Exception as e:
                 logger.error(f"训练设计 {design_name} 失败: {e}")
@@ -239,6 +256,38 @@ class SimpleExperiment:
                 }
                 
                 logger.info(f"  布局成功: {layout_success}, HPWL: {hpwl}")
+                
+                # === 使用通用工具函数自动补充案例 ===
+                if layout_success and hpwl is not None:
+                    from modules.utils.case_utils import add_auto_case
+                    
+                    # 尝试读取最新的DEF文件路径
+                    def_file = design_dir / "simple_placed.def"
+                    def_file_str = str(def_file) if def_file.exists() else None
+                    
+                    # 构造额外信息
+                    additional_info = {
+                        'experiment_type': 'simple_experiment',
+                        'design_dir': str(design_dir)
+                    }
+                    
+                    # 自动补充案例
+                    success = add_auto_case(
+                        design_name=design_name,
+                        layout_strategy=layout_strategy,
+                        action=action,
+                        hpwl=hpwl,
+                        layout_success=layout_success,
+                        def_file=def_file_str,
+                        retrieved_count=len(retrieved_cases),
+                        additional_info=additional_info
+                    )
+                    
+                    if success:
+                        logger.info(f"已自动补充案例: {design_name}")
+                    else:
+                        logger.warning(f"自动补充案例失败: {design_name}")
+                # === 自动补充案例结束 ===
                 
             except Exception as e:
                 logger.error(f"处理设计 {design_name} 失败: {e}")
@@ -451,13 +500,12 @@ puts "布局完成"
     
     def _save_results(self, results: Dict):
         """保存实验结果"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        result_file = self.results_dir / f"simple_experiment_results_{timestamp}.json"
-        
-        with open(result_file, 'w') as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
-        
-        logger.info(f"实验结果已保存: {result_file}")
+        import json
+        from datetime import datetime
+        filename = self.results_dir / f"simple_experiment_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(results, f, ensure_ascii=False, indent=2, default=convert_np)
+        logger.info(f"实验结果已保存: {filename}")
 
 def main():
     """主函数"""

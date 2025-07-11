@@ -150,21 +150,27 @@ class QLearningAgent:
         self.logger.debug(f"选择动作: k={k_value}, 类型={exploration_type}, 置信度={confidence:.3f}")
         return action
     
-    def select_action(self, state: State, available_actions: List[int] = None) -> Dict[str, Any]:
+    def select_action(self, state: State, available_actions: List[int] = None, training: bool = False) -> Dict[str, Any]:
         """选择动作（改进版）
         
         Args:
             state: 当前状态
             available_actions: 可用动作列表
-            
+            training: 是否为训练阶段（训练时允许探索，推理时只利用）
+        
         Returns:
             Dict: 选择的动作和相关信息
         """
         try:
+            old_epsilon = self.epsilon
+            if not training:
+                self.epsilon = 0.0
             # 1. 检查Q表状态
             if not self.q_table or len(self.q_table) == 0:
                 logger.warning("Q表为空，使用启发式方法选择k值")
-                return self._heuristic_action_selection(state)
+                result = self._heuristic_action_selection(state)
+                self.epsilon = old_epsilon
+                return result
             
             # 2. 状态哈希
             state_hash = self._hash_state(state)
@@ -172,14 +178,18 @@ class QLearningAgent:
             # 3. 检查状态是否在Q表中
             if state_hash not in self.q_table:
                 logger.info(f"新状态 {state_hash}，使用启发式方法")
-                return self._heuristic_action_selection(state)
+                result = self._heuristic_action_selection(state)
+                self.epsilon = old_epsilon
+                return result
             
             # 4. 获取该状态的Q值
             state_q_values = self.q_table[state_hash]
             
             if not state_q_values:
                 logger.warning("状态Q值为空，使用启发式方法")
-                return self._heuristic_action_selection(state)
+                result = self._heuristic_action_selection(state)
+                self.epsilon = old_epsilon
+                return result
             
             # 5. 选择最佳动作
             best_action = max(state_q_values.items(), key=lambda x: x[1])
@@ -189,24 +199,24 @@ class QLearningAgent:
             # 6. 探索vs利用决策
             exploration_type = self._decide_exploration_type(confidence)
             
-            if exploration_type == "explore":
+            if training and exploration_type == "explore":
                 # 探索：随机选择k值
                 k_value = self._explore_k_value(available_actions)
                 confidence = 0.5  # 探索时置信度较低
             
             logger.info(f"RL智能体选择动作: k={k_value}, confidence={confidence:.3f}, type={exploration_type}")
             
-            return {
+            result = {
                 "k_value": k_value,
                 "confidence": confidence,
-                "exploration_type": exploration_type,
-                "state_hash": state_hash,
-                "q_value": best_action[1]
+                "exploration_type": exploration_type
             }
-            
+            self.epsilon = old_epsilon
+            return result
         except Exception as e:
-            logger.error(f"动作选择失败: {str(e)}")
-            return self._heuristic_action_selection(state)
+            self.epsilon = old_epsilon
+            logger.error(f"select_action异常: {e}")
+            raise
     
     def _heuristic_action_selection(self, state: State) -> Dict[str, Any]:
         """启发式动作选择（改进版）"""

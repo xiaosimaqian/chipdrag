@@ -1,0 +1,57 @@
+{
+  "experiment_info": {
+    "start_time": "2025-07-11T16:25:47.400796",
+    "designs": [
+      "mgc_fft_1",
+      "mgc_matrix_mult_1",
+      "mgc_des_perf_1"
+    ],
+    "mode": "simplified"
+  },
+  "hpwl_results": {
+    "mgc_fft_1": {
+      "layout_success": false,
+      "hpwl": null,
+      "error": "QLearningAgent.select_action() got an unexpected keyword argument 'training'"
+    },
+    "mgc_matrix_mult_1": {
+      "layout_success": false,
+      "hpwl": null,
+      "error": "QLearningAgent.select_action() got an unexpected keyword argument 'training'"
+    },
+    "mgc_des_perf_1": {
+      "layout_success": false,
+      "hpwl": null,
+      "error": "QLearningAgent.select_action() got an unexpected keyword argument 'training'"
+    }
+  },
+  "rl_training": {
+    "episodes": [],
+    "q_table_stats": {
+      "total_states": 0,
+      "total_actions": 0,
+      "average_actions_per_state": 0,
+      "q_value_stats": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      }
+    },
+    "training_progress": {}
+  },
+  "summary": {
+    "total_designs": 3,
+    "successful_layouts": 0,
+    "success_rate": 0.0,
+    "hpwl_stats": {
+      "count": 0,
+      "mean": null,
+      "std": null,
+      "min": null,
+      "max": null
+    },
+    "rl_training_episodes": 0,
+    "q_table_states": 0
+  }
+}

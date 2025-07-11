@@ -27,6 +27,7 @@ from pathlib import Path
 import PyPDF2
 import torch
 from .chip_retriever import ChipRetriever
+from ..utils.case_utils import add_auto_case
 
 logger = logging.getLogger(__name__)
 
@@ -966,6 +967,45 @@ class RAGSystem:
             }
             
             self.logger.info(f"布局评估完成 - 总体评分: {quality_result['overall']:.3f}, 约束评分: {constraint_score:.3f}")
+            
+            # === 新增：自动补充案例到知识库 ===
+            try:
+                # 提取布局相关信息用于案例补充
+                design_name = layout.get('name', 'unknown')
+                layout_strategy = layout.get('metadata', {}).get('strategy', {})
+                action = layout.get('metadata', {}).get('action', {})
+                hpwl = layout.get('wirelength', 0.0)  # 使用wirelength作为HPWL近似
+                layout_success = quality_result['overall'] > 0.5  # 基于总体评分判断成功
+                def_file = layout.get('metadata', {}).get('def_file', None)
+                retrieved_count = layout.get('metadata', {}).get('retrieved_count', 0)
+                
+                # 构造额外信息
+                additional_info = {
+                    'evaluation_result': quality_result,
+                    'constraint_score': constraint_score,
+                    'overall_score': quality_result['overall']
+                }
+                
+                # 自动补充案例
+                success = add_auto_case(
+                    design_name=design_name,
+                    layout_strategy=layout_strategy,
+                    action=action,
+                    hpwl=hpwl,
+                    layout_success=layout_success,
+                    def_file=def_file,
+                    retrieved_count=retrieved_count,
+                    additional_info=additional_info
+                )
+                
+                if success:
+                    self.logger.info(f"已自动补充案例: {design_name}")
+                else:
+                    self.logger.warning(f"自动补充案例失败: {design_name}")
+                    
+            except Exception as e:
+                self.logger.warning(f"自动补充案例过程中出现异常: {e}")
+            # === 新增结束 ===
             
             return quality_result
             
