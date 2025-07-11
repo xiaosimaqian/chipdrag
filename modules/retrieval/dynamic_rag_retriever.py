@@ -159,10 +159,11 @@ class DynamicRAGRetriever:
                     'constraints': design_info.get('constraints', {})
                 }
             
-            # 从知识库检索
+            # 从知识库检索 - 降低相似度阈值以获取更多候选案例
             raw_results = self.knowledge_base.get_similar_cases(
                 query_features=query_features,
-                top_k=self.dynamic_k_range[1]  # 使用最大k值
+                top_k=self.dynamic_k_range[1],  # 使用最大k值
+                similarity_threshold=0.3  # 降低阈值以获取更多候选案例
             )
             
             # 转换为动态检索结果

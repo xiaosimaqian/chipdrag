@@ -933,6 +933,7 @@ class KnowledgeBase:
         """
         # 获取相似案例，使用合理阈值确保质量
         similar_cases = self.get_similar_cases(
+            similarity_threshold=0.3,  # 降低阈值以获取更多候选案例
             query_features=query,
             top_k=top_k,
             similarity_threshold=0.5

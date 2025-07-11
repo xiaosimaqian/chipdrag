@@ -195,7 +195,7 @@ class MultiGranularityRetrieval:
             similar_cases = self.knowledge_base.get_similar_cases(
                 query,
                 top_k=top_k,
-                similarity_threshold=0.5
+                similarity_threshold=0.3  # 降低阈值以获取更多候选案例
             )
             
             # 根据当前粒度过滤结果
