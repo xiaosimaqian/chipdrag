@@ -3315,7 +3315,9 @@ RL智能体选择的动作：
             current_net = None
             net_count = 0
             
-            for line in content.split('\n'):
+            # 使用迭代器来处理多行网络
+            content_iter = iter(content.split('\n'))
+            for line in content_iter:
                 line = line.strip()
                 if line.startswith('NETS'):
                     in_nets = True
@@ -3334,15 +3336,38 @@ RL智能体选择的动作：
                         current_net = {'name': net_name, 'pins': []}
                         nets.append(current_net)
                         
-                        # 在同一行中解析引脚连接
+                        # 解析引脚连接 - 修正格式解析
                         # 格式: - net_name ( comp1 pin1 ) ( comp2 pin2 ) + USE SIGNAL ;
-                        for i, part in enumerate(parts):
-                            if part.startswith('(') and i + 2 < len(parts):
-                                comp_name = parts[i + 1]  # 组件名
-                                if comp_name in components:
-                                    current_net['pins'].append(comp_name)
-                                    if len(current_net['pins']) <= 3:  # 只记录前3个用于调试
-                                        logger.info(f"  网络 {net_name} 添加引脚: {comp_name}")
+                        line_content = line.strip()
+                        
+                        # 使用正则表达式匹配所有 ( component pin ) 格式的连接
+                        pin_matches = re.findall(r'\(\s*(\S+)\s+\S+\s*\)', line_content)
+                        for comp_name in pin_matches:
+                            if comp_name in components:
+                                current_net['pins'].append(comp_name)
+                                if len(current_net['pins']) <= 3:  # 只记录前3个用于调试
+                                    logger.info(f"  网络 {net_name} 添加引脚: {comp_name}")
+                        
+                        # 如果网络跨多行，继续解析下一行
+                        if not line_content.endswith(';'):
+                            # 继续读取下一行直到找到分号
+                            continue_parsing = True
+                            while continue_parsing:
+                                try:
+                                    next_line = next(content_iter).strip()
+                                    if next_line:
+                                        # 解析下一行中的引脚连接
+                                        next_pin_matches = re.findall(r'\(\s*(\S+)\s+\S+\s*\)', next_line)
+                                        for comp_name in next_pin_matches:
+                                            if comp_name in components:
+                                                current_net['pins'].append(comp_name)
+                                                if len(current_net['pins']) <= 3:  # 只记录前3个用于调试
+                                                    logger.info(f"  网络 {net_name} 添加引脚: {comp_name}")
+                                        
+                                        if next_line.endswith(';'):
+                                            continue_parsing = False
+                                except StopIteration:
+                                    break
             
             logger.info(f"  解析了 {len(nets)} 个网络")
             
