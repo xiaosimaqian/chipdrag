@@ -529,6 +529,54 @@ class UnifiedPaperExperiment:
         self._save_all_results(hpwl_results, training_records, inference_results, ablation_results, report)
         
         logger.info("=== 统一版论文HPWL对比实验完成 ===")
+
+        # === 自动输出HPWL对比JSON报告（含参数与检索轨迹） ===
+        try:
+            dataset_dir = Path("dataset/ispd_2015_contest_benchmark")
+            report_json = {}
+            # 默认参数
+            openroad_default_params = {
+                "utilization": 0.7,
+                "aspect_ratio": 1.0,
+                "placement_density": 0.7,
+                "overflow_threshold": 0.15,
+                "strategy_type": "openroad_default"
+            }
+            # 尝试加载优化参数与轨迹缓存（如果有）
+            chipdrag_params_trace = getattr(self, '_chipdrag_params_trace', {})
+            for design_dir in dataset_dir.iterdir():
+                if not design_dir.is_dir():
+                    continue
+                design_name = design_dir.name
+                def_default = design_dir / "openroad_default.def"
+                def_optimized = design_dir / "chipdrag_optimized.def"
+                hpwl_default = self._extract_hpwl_from_def_ispd2005_style(def_default) if def_default.exists() else None
+                if hpwl_default is None and def_default.exists():
+                    hpwl_default = self._extract_hpwl_from_def(def_default)
+                hpwl_optimized = self._extract_hpwl_from_def_ispd2005_style(def_optimized) if def_optimized.exists() else None
+                if hpwl_optimized is None and def_optimized.exists():
+                    hpwl_optimized = self._extract_hpwl_from_def(def_optimized)
+                improvement = None
+                if hpwl_default and hpwl_optimized and hpwl_default > 0:
+                    improvement = ((hpwl_default - hpwl_optimized) / hpwl_default) * 100
+                # 获取优化参数与检索轨迹
+                chipdrag_info = chipdrag_params_trace.get(design_name, {})
+                report_json[design_name] = {
+                    "openroad_default_hpwl": hpwl_default,
+                    "chipdrag_optimized_hpwl": hpwl_optimized,
+                    "improvement_percent": improvement,
+                    "openroad_default_params": openroad_default_params,
+                    "chipdrag_optimized_params": chipdrag_info.get("params"),
+                    "chipdrag_retrieval_trace": chipdrag_info.get("trace")
+                }
+            out_path = Path("paper_hpwl_results/hpwl_comparison_report.json")
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(out_path, "w") as f:
+                json.dump(report_json, f, indent=2, ensure_ascii=False)
+            logger.info(f"HPWL对比报告已自动保存: {out_path}")
+        except Exception as e:
+            logger.error(f"自动输出HPWL对比报告失败: {e}")
+
         return report
     
     def _load_rag_config(self) -> Dict[str, Any]:
@@ -793,7 +841,39 @@ class UnifiedPaperExperiment:
             # 4. 生成布局策略
             layout_strategy = self._generate_layout_strategy(retrieved_cases, action)
             
-            # 5. 执行布局优化
+            # 5. 缓存参数和检索轨迹信息
+            if not hasattr(self, '_chipdrag_params_trace'):
+                self._chipdrag_params_trace = {}
+            
+            # 构建检索轨迹信息
+            retrieval_trace = {
+                'rl_action': {
+                    'k_value': getattr(action, 'k_value', 8),
+                    'confidence': getattr(action, 'confidence', 0.8),
+                    'exploration_type': getattr(action, 'exploration_type', 'greedy')
+                },
+                'retrieved_cases': [
+                    {
+                        'id': getattr(case, 'id', f'case_{i}'),
+                        'source': getattr(case, 'source', 'unknown'),
+                        'relevance_score': getattr(case, 'relevance_score', 0.0),
+                        'granularity_level': getattr(case, 'granularity_level', 'unknown'),
+                        'features': getattr(case, 'knowledge', {}).get('features', {}) if hasattr(case, 'knowledge') else {}
+                    }
+                    for i, case in enumerate(retrieved_cases[:5])  # 只记录前5个最相关的案例
+                ],
+                'llm_reasoning': layout_strategy.get('llm_reasoning', ''),
+                'strategy_source': layout_strategy.get('source', 'unknown'),
+                'case_count': len(retrieved_cases)
+            }
+            
+            # 缓存参数和轨迹
+            self._chipdrag_params_trace[design_name] = {
+                'params': layout_strategy.get('parameters', {}),
+                'trace': retrieval_trace
+            }
+            
+            # 6. 执行布局优化
             logger.info(f"  执行OpenROAD布局优化...")
             layout_success = self._execute_openroad_layout(task['dir'], layout_strategy)
             
@@ -1207,9 +1287,12 @@ if {{[catch {{
 }}
 
 # 输出结果
+set def_filename "openroad_default.def"
+if {strategy_type} != "openroad_default" {{
+    set def_filename "chipdrag_optimized.def"
+}}
 puts "写入布局结果..."
-write_def placed.def
-
+write_def $def_filename
 puts "=== 布局完成 ==="
 """
     
@@ -1395,9 +1478,12 @@ if {{[catch {{
 }}
 
 # 输出结果
+set def_filename "openroad_default.def"
+if {strategy_type} != "openroad_default" {{
+    set def_filename "chipdrag_optimized.def"
+}}
 puts "写入布局结果..."
-write_def placed.def
-
+write_def $def_filename
 puts "=== 布局完成 ==="
 """
     
@@ -2033,41 +2119,125 @@ RL智能体选择的动作：
             return replace(state)
     
     def _collect_hpwl_comparison_data(self) -> Dict[str, Any]:
-        """收集HPWL对比数据"""
-        logger.info("收集HPWL对比数据：OpenROAD默认布局 vs ChipDRAG优化布局")
+        """收集HPWL对比数据：OpenROAD默认参数 vs ChipDRAG优化参数"""
+        logger.info("收集HPWL对比数据：OpenROAD默认参数布局 vs ChipDRAG优化参数布局")
         
         hpwl_data = {}
         
         for design_name in self.experiment_config['designs']:
             design_dir = self.data_dir / design_name
             
-            # 尝试从placed.def计算ChipDRAG HPWL
-            chipdrag_hpwl = None
-            placed_def = design_dir / "placed.def"
-            if placed_def.exists():
-                chipdrag_hpwl = self._extract_hpwl_from_def(placed_def)
+            # 步骤1：使用OpenROAD默认参数布局，生成原值
+            logger.info(f"处理设计 {design_name}: 生成OpenROAD默认布局")
+            openroad_default_hpwl = self._generate_openroad_default_layout(design_dir)
             
-            # 计算OpenROAD默认布局的HPWL
-            floorplan_def = design_dir / "floorplan.def"
-            openroad_default_hpwl = self._extract_hpwl_from_def(floorplan_def)
+            # 步骤2：使用ChipDRAG优化参数布局，生成新值
+            logger.info(f"处理设计 {design_name}: 生成ChipDRAG优化布局")
+            chipdrag_optimized_hpwl = self._generate_chipdrag_optimized_layout(design_dir)
             
-            if chipdrag_hpwl is not None and chipdrag_hpwl > 0:
-                improvement = ((openroad_default_hpwl - chipdrag_hpwl) / openroad_default_hpwl) * 100
+            # 步骤3：比较HPWL值
+            if openroad_default_hpwl is not None and chipdrag_optimized_hpwl is not None:
+                improvement = ((openroad_default_hpwl - chipdrag_optimized_hpwl) / openroad_default_hpwl) * 100
                 hpwl_data[design_name] = {
                     'openroad_default': openroad_default_hpwl,
-                    'chipdrag_optimized': chipdrag_hpwl,
+                    'chipdrag_optimized': chipdrag_optimized_hpwl,
                     'improvement_percentage': improvement,
                     'status': 'success'
                 }
+                logger.info(f"设计 {design_name}: 原值={openroad_default_hpwl:.0f}, 新值={chipdrag_optimized_hpwl:.0f}, 改进={improvement:.2f}%")
             else:
                 hpwl_data[design_name] = {
                     'openroad_default': openroad_default_hpwl,
-                    'chipdrag_optimized': None,
+                    'chipdrag_optimized': chipdrag_optimized_hpwl,
                     'improvement_percentage': None,
                     'status': 'failed'
                 }
+                logger.warning(f"设计 {design_name}: HPWL提取失败")
         
         return hpwl_data
+    
+    def _generate_openroad_default_layout(self, design_dir: Path) -> Optional[float]:
+        """使用OpenROAD默认参数生成布局并提取HPWL"""
+        try:
+            # 使用OpenROAD默认参数进行布局
+            default_strategy = {
+                'parameters': {
+                    'utilization': 0.7,
+                    'aspect_ratio': 1.0,
+                    'placement_density': 0.7,
+                    'overflow_threshold': 0.15
+                },
+                'strategy_type': 'openroad_default'
+            }
+            
+            # 执行OpenROAD默认布局
+            success = self._execute_openroad_layout(design_dir, default_strategy)
+            
+            if success:
+                # 从生成的DEF文件提取HPWL
+                placed_def = design_dir / "placed.def"
+                if placed_def.exists():
+                    hpwl = self._extract_hpwl_from_def_ispd2005_style(placed_def)
+                    if hpwl is None:
+                        hpwl = self._extract_hpwl_from_def(placed_def)
+                    return hpwl
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"生成OpenROAD默认布局失败: {e}")
+            return None
+    
+    def _generate_chipdrag_optimized_layout(self, design_dir: Path) -> Optional[float]:
+        """使用ChipDRAG优化参数生成布局并提取HPWL"""
+        try:
+            # 加载设计信息
+            design_info = self._load_design_info(design_dir)
+            
+            # 使用ChipDRAG系统生成优化策略
+            retriever = DynamicRAGRetriever(self._load_rag_config())
+            rl_agent = QLearningAgent({'alpha':0.01,'gamma':0.95,'epsilon':0.9,'k_range':(3,15)})
+            state_extractor = StateExtractor({
+                'performance_cache_size': 1000,
+                'feature_normalization': True,
+                'design_complexity_weights': {
+                    'components': 0.3,
+                    'nets': 0.25,
+                    'area': 0.2,
+                    'hierarchy': 0.25
+                }
+            })
+            
+            # 提取状态并选择动作
+            state = state_extractor.extract_state(design_info)
+            action = rl_agent.select_action(state, training=False)
+            
+            # 检索相关案例
+            retrieved_cases = retriever.retrieve_with_dynamic_reranking(
+                query={'features': design_info, 'design_name': design_dir.name}, 
+                design_info=design_info
+            )
+            
+            # 生成优化布局策略
+            layout_strategy = self._generate_layout_strategy(retrieved_cases, action)
+            
+            # 执行ChipDRAG优化布局
+            success = self._execute_openroad_layout(design_dir, layout_strategy)
+            
+            if success:
+                # 从生成的DEF文件提取HPWL
+                placed_def = design_dir / "placed.def"
+                if placed_def.exists():
+                    hpwl = self._extract_hpwl_from_def_ispd2005_style(placed_def)
+                    if hpwl is None:
+                        hpwl = self._extract_hpwl_from_def(placed_def)
+                    return hpwl
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"生成ChipDRAG优化布局失败: {e}")
+            return None
     
     def _run_rl_inference_verification(self, retriever, rl_agent, state_extractor) -> List[Dict[str, Any]]:
         """运行RL推理验证"""
