@@ -1288,7 +1288,7 @@ if {{[catch {{
 
 # 输出结果
 set def_filename "openroad_default.def"
-if {strategy_type} != "openroad_default" {{
+if {{$strategy_type != "openroad_default"}} {{
     set def_filename "chipdrag_optimized.def"
 }}
 puts "写入布局结果..."
@@ -1479,7 +1479,7 @@ if {{[catch {{
 
 # 输出结果
 set def_filename "openroad_default.def"
-if {strategy_type} != "openroad_default" {{
+if {{$strategy_type != "openroad_default"}} {{
     set def_filename "chipdrag_optimized.def"
 }}
 puts "写入布局结果..."
@@ -1791,11 +1791,25 @@ RL智能体选择的动作：
             
             # 解析LLM响应
             if llm_response and isinstance(llm_response, str):
-                # 尝试提取JSON
+                # 尝试提取JSON - 增强的解析逻辑
                 import re
                 json_match = re.search(r'\{.*\}', llm_response, re.DOTALL)
                 if json_match:
-                    llm_strategy = json.loads(json_match.group())
+                    try:
+                        llm_strategy = json.loads(json_match.group())
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"JSON解析失败，尝试修复格式: {e}")
+                        # 尝试修复常见的JSON格式问题
+                        fixed_json = json_match.group()
+                        # 修复缺少双引号的属性名
+                        fixed_json = re.sub(r'(\w+):', r'"\1":', fixed_json)
+                        # 修复单引号
+                        fixed_json = fixed_json.replace("'", '"')
+                        try:
+                            llm_strategy = json.loads(fixed_json)
+                        except json.JSONDecodeError:
+                            logger.warning("JSON修复失败，使用基础策略")
+                            llm_strategy = {}
                     
                     # 验证和调整LLM输出
                     strategy_params = {
