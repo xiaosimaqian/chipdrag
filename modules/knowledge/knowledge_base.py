@@ -128,13 +128,41 @@ class KnowledgeBase:
             raise
             
     def _load_data(self) -> List[Dict]:
-        """加载知识库数据
+        """加载知识库数据（改进版，支持扩充案例）
         
         Returns:
             List[Dict]: 知识列表
         """
         try:
-            # 优先尝试加载layout_experience/cases.pkl（扩展的151个案例）
+            # 1. 优先加载扩充的案例数据
+            enhanced_cases_file = "data/enhanced_cases/enhanced_cases.json"
+            if os.path.exists(enhanced_cases_file):
+                logger.info(f"加载扩充案例数据: {enhanced_cases_file}")
+                try:
+                    with open(enhanced_cases_file, 'r', encoding='utf-8') as f:
+                        enhanced_data = json.load(f)
+                    logger.info(f"成功加载 {len(enhanced_data)} 个扩充案例")
+                    
+                    # 转换扩充案例格式
+                    converted_cases = []
+                    for case in enhanced_data:
+                        converted_case = {
+                            'id': case.get('id', len(converted_cases)),
+                            'layout': case.get('def_info', {}),
+                            'optimization_result': case.get('optimization_result', {}),
+                            'metadata': case.get('metadata', {}),
+                            'def_info': case.get('def_info', {}),
+                            'lef_info': case.get('lef_info', {}),
+                            'features': case.get('features', {}),
+                            'timestamp': case.get('metadata', {}).get('timestamp', '2025-07-11')
+                        }
+                        converted_cases.append(converted_case)
+                    
+                    return converted_cases
+                except Exception as e:
+                    logger.error(f"加载扩充案例数据失败: {str(e)}")
+            
+            # 2. 尝试加载layout_experience/cases.pkl（扩展的151个案例）
             layout_cases_file = os.path.join(self.layout_experience_path, "cases.pkl")
             if os.path.exists(layout_cases_file) and os.path.getsize(layout_cases_file) > 1000:
                 logger.info(f"加载扩展案例数据: {layout_cases_file}")
@@ -143,7 +171,7 @@ class KnowledgeBase:
                 logger.info(f"成功加载 {len(data)} 个扩展案例")
                 return data
             
-            # 其次尝试加载cases.pkl（真实ISPD数据）
+            # 3. 尝试加载cases.pkl（真实ISPD数据）
             cases_file = os.path.join(self.layout_experience_path, "cases.pkl")
             if os.path.exists(cases_file) and os.path.getsize(cases_file) > 1000:  # 确保文件有实际内容
                 logger.info(f"加载真实ISPD案例数据: {cases_file}")
@@ -152,7 +180,7 @@ class KnowledgeBase:
                 logger.info(f"成功加载 {len(data)} 个真实ISPD案例")
                 return data
             
-            # 如果cases.pkl不存在或为空，尝试加载JSON格式的案例数据
+            # 4. 如果cases.pkl不存在或为空，尝试加载JSON格式的案例数据
             if self.format == 'json' and os.path.exists(self.path):
                 logger.info(f"加载JSON格式案例数据: {self.path}")
                 try:
@@ -163,7 +191,7 @@ class KnowledgeBase:
                 except Exception as e:
                     logger.error(f"加载JSON案例数据失败: {str(e)}")
             
-              # 如果JSON加载失败，尝试加载data.pkl
+            # 5. 如果JSON加载失败，尝试加载data.pkl
             if os.path.exists(self.data_file):
                 logger.info(f"加载知识库文件: {self.data_file}")
                 # 检查文件大小
@@ -638,10 +666,16 @@ class KnowledgeBase:
         """
         try:
             if not features1 or not features2:
+                logger.warning("特征字典为空，返回默认相似度")
                 return 0.0
-                
+            
+            # 调试信息
+            logger.debug(f"计算相似度 - 特征1: {features1}")
+            logger.debug(f"计算相似度 - 特征2: {features2}")
+            
             total_score = 0.0
             total_weight = 0.0
+            component_scores = {}
             
             # 1. 组件数量相似度 (权重: 0.25) - 最重要的特征
             if 'num_components' in features1 and 'num_components' in features2:
@@ -656,6 +690,8 @@ class KnowledgeBase:
                     comp_sim = comp_sim ** 1.5
                     total_score += comp_sim * 0.25
                     total_weight += 0.25
+                    component_scores['num_components'] = comp_sim
+                    logger.debug(f"组件数量相似度: {comp_sim:.3f} (comp1={comp1}, comp2={comp2})")
             
             # 2. 面积相似度 (权重: 0.20)
             if 'area' in features1 and 'area' in features2:
@@ -669,6 +705,8 @@ class KnowledgeBase:
                     area_sim = area_sim ** 1.3
                     total_score += area_sim * 0.20
                     total_weight += 0.20
+                    component_scores['area'] = area_sim
+                    logger.debug(f"面积相似度: {area_sim:.3f} (area1={area1}, area2={area2})")
             
             # 3. 组件密度相似度 (权重: 0.15)
             if 'component_density' in features1 and 'component_density' in features2:
@@ -678,6 +716,8 @@ class KnowledgeBase:
                 density_sim = density_sim ** 1.2
                 total_score += density_sim * 0.15
                 total_weight += 0.15
+                component_scores['component_density'] = density_sim
+                logger.debug(f"组件密度相似度: {density_sim:.3f} (density1={density1}, density2={density2})")
             
             # 4. 复杂度相似度 (权重: 0.15)
             if 'complexity' in features1 and 'complexity' in features2:
@@ -687,6 +727,8 @@ class KnowledgeBase:
                 complexity_sim = complexity_sim ** 1.2
                 total_score += complexity_sim * 0.15
                 total_weight += 0.15
+                component_scores['complexity'] = complexity_sim
+                logger.debug(f"复杂度相似度: {complexity_sim:.3f} (complexity1={complexity1}, complexity2={complexity2})")
             
             # 5. 层次结构相似度 (权重: 0.15)
             if 'hierarchy' in features1 and 'hierarchy' in features2:
@@ -696,6 +738,8 @@ class KnowledgeBase:
                 hierarchy_sim = hierarchy_sim ** 1.1
                 total_score += hierarchy_sim * 0.15
                 total_weight += 0.15
+                component_scores['hierarchy'] = hierarchy_sim
+                logger.debug(f"层次结构相似度: {hierarchy_sim:.3f}")
             
             # 6. 约束条件相似度 (权重: 0.10)
             if 'constraints' in features1 and 'constraints' in features2:
@@ -705,13 +749,21 @@ class KnowledgeBase:
                 constraint_sim = constraint_sim ** 1.1
                 total_score += constraint_sim * 0.10
                 total_weight += 0.10
+                component_scores['constraints'] = constraint_sim
+                logger.debug(f"约束条件相似度: {constraint_sim:.3f}")
             
             # 计算加权平均相似度
             if total_weight > 0:
                 final_similarity = total_score / total_weight
                 # 应用最终的非线性变换，提高高相似度的区分度
-                return final_similarity ** 1.2
+                final_similarity = final_similarity ** 1.2
+                
+                logger.debug(f"最终相似度: {final_similarity:.3f}")
+                logger.debug(f"组件分数: {component_scores}")
+                
+                return final_similarity
             else:
+                logger.warning("没有有效的特征用于相似度计算")
                 return 0.0
             
         except Exception as e:
@@ -745,7 +797,7 @@ class KnowledgeBase:
             return 0.0
             
     def _extract_case_features_for_similarity(self, case: Dict) -> Dict:
-        """从案例中提取特征用于相似度计算
+        """从案例中提取特征用于相似度计算（改进版）
         
         Args:
             case: 案例数据
@@ -760,97 +812,194 @@ class KnowledgeBase:
             metadata = case.get('metadata', {})
             optimization_result = case.get('optimization_result', {})
             
-            # 1. 组件数量 - 从port_count估算，使用更合理的估算方法
-            port_count = metadata.get('port_count', 0)
-            if port_count > 0:
-                # 根据设计类型和复杂度调整估算系数
-                design_type = metadata.get('design_type', '')
-                complexity = metadata.get('complexity', 0.5)
-                
-                # 不同设计类型的组件密度不同
-                if '超大规模' in design_type:
-                    multiplier = 50  # 超大规模设计组件密度高
-                elif 'FFT' in design_type or '变换' in design_type:
-                    multiplier = 30  # FFT设计组件密度中等
-                elif 'PCI' in design_type or '桥接' in design_type:
-                    multiplier = 20  # PCI桥接组件密度较低
-                else:
-                    multiplier = 25  # 默认值
-                
-                # 根据复杂度调整
-                complexity_factor = 0.5 + complexity  # 复杂度越高，组件数越多
-                features['num_components'] = int(port_count * multiplier * complexity_factor)
-            else:
-                # 如果没有port_count，尝试从其他信息估算
-                design_type = metadata.get('design_type', '')
-                if '超大规模' in design_type:
-                    features['num_components'] = 50000
-                elif 'FFT' in design_type:
-                    features['num_components'] = 30000
-                elif 'PCI' in design_type:
-                    features['num_components'] = 15000
-                else:
-                    features['num_components'] = 20000
+            # 1. 组件数量 - 优先从真实数据提取
+            num_components = self._extract_component_count(case, metadata)
+            features['num_components'] = num_components
             
-            # 2. 面积 - 从optimization_result中获取
-            area = optimization_result.get('area', 0)
-            if area <= 0:
-                # 如果area为0，尝试从core_bbox估算
-                core_bbox = metadata.get('core_bbox', '')
-                if core_bbox and 'um' in core_bbox:
-                    try:
-                        # 解析bbox格式: "( x1 y1 ) ( x2 y2 ) um"
-                        bbox_parts = core_bbox.replace('(', '').replace(')', '').replace('um', '').split()
-                        if len(bbox_parts) >= 4:
-                            x1, y1, x2, y2 = map(float, bbox_parts[:4])
-                            area = (x2 - x1) * (y2 - y1)
-                    except:
-                        area = 1000000  # 默认面积
-                else:
-                    area = 1000000  # 默认面积
-            
+            # 2. 面积 - 从真实数据提取
+            area = self._extract_area(case, metadata, optimization_result)
             features['area'] = area
             
             # 3. 组件密度 - 基于面积和组件数量计算
-            if area > 0 and features['num_components'] > 0:
-                features['component_density'] = features['num_components'] / area
+            if area > 0 and num_components > 0:
+                features['component_density'] = num_components / area
             else:
                 features['component_density'] = 0.1  # 默认值
             
-            # 4. 层次结构 - 从metadata中提取
-            design_type = metadata.get('design_type', '')
-            features['hierarchy'] = {
-                'levels': ['top'],
-                'modules': [design_type] if design_type else ['default']
-            }
+            # 4. 层次结构 - 从真实数据提取
+            features['hierarchy'] = self._extract_hierarchy(case, metadata)
             
-            # 5. 约束条件 - 从metadata中提取
-            constraints_list = metadata.get('constraints', [])
-            features['constraints'] = {
-                'timing': {'max_delay': 1000},  # 默认值
-                'power': {'max_power': 1000},   # 默认值
-                'special_nets': len(constraints_list)
-            }
+            # 5. 约束条件 - 从真实数据提取
+            features['constraints'] = self._extract_constraints(case, metadata)
             
-            # 如果有具体的约束信息，更新约束条件
-            if 'area' in constraints_list:
-                features['constraints']['area'] = {'max_area': area}
-            
-            # 6. 添加复杂度信息
-            features['complexity'] = metadata.get('complexity', 0.5)
+            # 6. 复杂度 - 基于真实特征计算
+            features['complexity'] = self._calculate_complexity(features)
             
             return features
             
         except Exception as e:
             logger.error(f"提取案例特征失败: {str(e)}")
-            return {
-                'num_components': 1000,
-                'area': 100000000,
-                'component_density': 0.1,
-                'hierarchy': {'levels': ['top'], 'modules': ['default']},
-                'constraints': {'timing': {'max_delay': 1000}, 'power': {'max_power': 1000}, 'special_nets': 2},
-                'complexity': 0.5
-            }
+            return self._get_default_features()
+    
+    def _extract_component_count(self, case: Dict, metadata: Dict) -> int:
+        """提取组件数量"""
+        # 1. 尝试从DEF文件信息提取
+        if 'def_info' in case:
+            def_info = case['def_info']
+            if 'COMPONENTS' in def_info:
+                return int(def_info['COMPONENTS'])
+        
+        # 2. 尝试从metadata的port_count估算
+        port_count = metadata.get('port_count', 0)
+        if port_count > 0:
+            design_type = metadata.get('design_type', '')
+            complexity = metadata.get('complexity', 0.5)
+            
+            # 根据设计类型调整估算系数
+            if '超大规模' in design_type:
+                multiplier = 50
+            elif 'FFT' in design_type or '变换' in design_type:
+                multiplier = 30
+            elif 'PCI' in design_type or '桥接' in design_type:
+                multiplier = 20
+            else:
+                multiplier = 25
+            
+            complexity_factor = 0.5 + complexity
+            return int(port_count * multiplier * complexity_factor)
+        
+        # 3. 基于设计类型估算
+        design_type = metadata.get('design_type', '')
+        if '超大规模' in design_type:
+            return 50000
+        elif 'FFT' in design_type:
+            return 30000
+        elif 'PCI' in design_type:
+            return 15000
+        else:
+            return 20000
+    
+    def _extract_area(self, case: Dict, metadata: Dict, optimization_result: Dict) -> float:
+        """提取面积信息"""
+        # 1. 从optimization_result获取
+        area = optimization_result.get('area', 0)
+        if area > 0:
+            return area
+        
+        # 2. 从DEF文件信息提取
+        if 'def_info' in case:
+            def_info = case['def_info']
+            if 'DIEAREA' in def_info:
+                try:
+                    # 解析DIEAREA格式: "( x1 y1 ) ( x2 y2 )"
+                    diearea = def_info['DIEAREA']
+                    import re
+                    coords = re.findall(r'\(\s*(\d+)\s+(\d+)\s*\)', diearea)
+                    if len(coords) >= 2:
+                        x1, y1 = map(int, coords[0])
+                        x2, y2 = map(int, coords[1])
+                        return (x2 - x1) * (y2 - y1)
+                except:
+                    pass
+        
+        # 3. 从core_bbox估算
+        core_bbox = metadata.get('core_bbox', '')
+        if core_bbox and 'um' in core_bbox:
+            try:
+                bbox_parts = core_bbox.replace('(', '').replace(')', '').replace('um', '').split()
+                if len(bbox_parts) >= 4:
+                    x1, y1, x2, y2 = map(float, bbox_parts[:4])
+                    return (x2 - x1) * (y2 - y1)
+            except:
+                pass
+        
+        return 1000000  # 默认面积
+    
+    def _extract_hierarchy(self, case: Dict, metadata: Dict) -> Dict:
+        """提取层次结构"""
+        # 1. 从DEF文件信息提取
+        if 'def_info' in case:
+            def_info = case['def_info']
+            modules = []
+            if 'COMPONENTS' in def_info:
+                # 提取组件类型作为模块信息
+                component_types = set()
+                for comp_info in def_info.get('component_details', []):
+                    if 'type' in comp_info:
+                        component_types.add(comp_info['type'])
+                modules = list(component_types)[:10]  # 限制模块数量
+        
+        # 2. 从metadata获取
+        if not modules:
+            design_type = metadata.get('design_type', '')
+            modules = [design_type] if design_type else ['default']
+        
+        return {
+            'levels': ['top'],
+            'modules': modules
+        }
+    
+    def _extract_constraints(self, case: Dict, metadata: Dict) -> Dict:
+        """提取约束条件"""
+        constraints = {
+            'timing': {'max_delay': 1000},
+            'power': {'max_power': 1000},
+            'special_nets': 2
+        }
+        
+        # 从metadata获取约束信息
+        constraints_list = metadata.get('constraints', [])
+        if constraints_list:
+            constraints['special_nets'] = len(constraints_list)
+        
+        # 从DEF文件信息提取
+        if 'def_info' in case:
+            def_info = case['def_info']
+            if 'SPECIALNETS' in def_info:
+                constraints['special_nets'] = int(def_info['SPECIALNETS'])
+        
+        return constraints
+    
+    def _calculate_complexity(self, features: Dict) -> float:
+        """计算设计复杂度"""
+        complexity = 0.5  # 基础复杂度
+        
+        # 基于组件数量调整
+        num_components = features.get('num_components', 0)
+        if num_components > 50000:
+            complexity += 0.3
+        elif num_components > 30000:
+            complexity += 0.2
+        elif num_components > 15000:
+            complexity += 0.1
+        
+        # 基于组件密度调整
+        density = features.get('component_density', 0)
+        if density > 0.1:
+            complexity += 0.2
+        elif density > 0.05:
+            complexity += 0.1
+        
+        # 基于层次结构调整
+        hierarchy = features.get('hierarchy', {})
+        modules = hierarchy.get('modules', [])
+        if len(modules) > 5:
+            complexity += 0.2
+        elif len(modules) > 2:
+            complexity += 0.1
+        
+        return min(1.0, complexity)
+    
+    def _get_default_features(self) -> Dict:
+        """获取默认特征"""
+        return {
+            'num_components': 1000,
+            'area': 100000000,
+            'component_density': 0.1,
+            'hierarchy': {'levels': ['top'], 'modules': ['default']},
+            'constraints': {'timing': {'max_delay': 1000}, 'power': {'max_power': 1000}, 'special_nets': 2},
+            'complexity': 0.5
+        }
         
     def _compute_constraint_similarity(self, constraints1: Dict, constraints2: Dict) -> float:
         """计算约束条件相似度"""

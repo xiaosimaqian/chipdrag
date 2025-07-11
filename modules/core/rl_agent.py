@@ -15,6 +15,7 @@ from datetime import datetime
 import hashlib
 import pickle
 import os
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -106,10 +107,11 @@ class QLearningAgent:
             'convergence_episodes': 0
         }
         
-        # 加载预训练模型（如果存在）
-        self._load_pretrained_model()
+        # 自动加载Q表（如果存在）
+        self.load_q_table()
         
         self.logger.info(f"Q-Learning智能体初始化完成，动作空间: {self.action_space}")
+        self.logger.info(f"Q表状态: {len(self.q_table)} 个状态")
     
     def choose_action(self, state: State) -> Action:
         """选择动作（k值）
@@ -148,34 +150,128 @@ class QLearningAgent:
         self.logger.debug(f"选择动作: k={k_value}, 类型={exploration_type}, 置信度={confidence:.3f}")
         return action
     
-    def select_action(self, state: State, training: bool = True, epsilon: Optional[float] = None) -> Action:
-        """选择动作（兼容接口）
+    def select_action(self, state: State, available_actions: List[int] = None) -> Dict[str, Any]:
+        """选择动作（改进版）
         
         Args:
             state: 当前状态
-            training: 是否为训练模式
-            epsilon: 可选的探索率覆盖
+            available_actions: 可用动作列表
             
         Returns:
-            Action: 选择的动作
+            Dict: 选择的动作和相关信息
         """
-        # 保存原始探索率
-        original_epsilon = self.epsilon
-        
-        # 如果指定了epsilon，临时使用它
-        if epsilon is not None:
-            self.epsilon = epsilon
-        
-        # 如果不是训练模式，设置为纯利用
-        if not training:
-            self.epsilon = 0.0
-        
         try:
-            action = self.choose_action(state)
-            return action
-        finally:
-            # 恢复原始探索率
-            self.epsilon = original_epsilon
+            # 1. 检查Q表状态
+            if not self.q_table or len(self.q_table) == 0:
+                logger.warning("Q表为空，使用启发式方法选择k值")
+                return self._heuristic_action_selection(state)
+            
+            # 2. 状态哈希
+            state_hash = self._hash_state(state)
+            
+            # 3. 检查状态是否在Q表中
+            if state_hash not in self.q_table:
+                logger.info(f"新状态 {state_hash}，使用启发式方法")
+                return self._heuristic_action_selection(state)
+            
+            # 4. 获取该状态的Q值
+            state_q_values = self.q_table[state_hash]
+            
+            if not state_q_values:
+                logger.warning("状态Q值为空，使用启发式方法")
+                return self._heuristic_action_selection(state)
+            
+            # 5. 选择最佳动作
+            best_action = max(state_q_values.items(), key=lambda x: x[1])
+            k_value = best_action[0]
+            confidence = best_action[1]
+            
+            # 6. 探索vs利用决策
+            exploration_type = self._decide_exploration_type(confidence)
+            
+            if exploration_type == "explore":
+                # 探索：随机选择k值
+                k_value = self._explore_k_value(available_actions)
+                confidence = 0.5  # 探索时置信度较低
+            
+            logger.info(f"RL智能体选择动作: k={k_value}, confidence={confidence:.3f}, type={exploration_type}")
+            
+            return {
+                "k_value": k_value,
+                "confidence": confidence,
+                "exploration_type": exploration_type,
+                "state_hash": state_hash,
+                "q_value": best_action[1]
+            }
+            
+        except Exception as e:
+            logger.error(f"动作选择失败: {str(e)}")
+            return self._heuristic_action_selection(state)
+    
+    def _heuristic_action_selection(self, state: State) -> Dict[str, Any]:
+        """启发式动作选择（改进版）"""
+        try:
+            # 基于状态特征选择k值
+            query_complexity = state.query_complexity
+            design_size = state.design_size
+            initial_relevance = state.initial_relevance
+            
+            # 启发式规则
+            if design_size > 50000:  # 超大规模设计
+                k_value = 5
+            elif design_size > 30000:  # 大规模设计
+                k_value = 4
+            elif design_size > 15000:  # 中等规模设计
+                k_value = 3
+            else:  # 小规模设计
+                k_value = 2
+            
+            # 根据查询复杂度调整
+            if query_complexity > 0.8:
+                k_value = min(k_value + 1, 5)
+            elif query_complexity < 0.3:
+                k_value = max(k_value - 1, 1)
+            
+            # 根据初始相关性调整
+            if initial_relevance < 0.3:
+                k_value = min(k_value + 1, 5)  # 相关性低时增加检索数量
+            
+            # 确保k值在合理范围内
+            k_value = max(1, min(k_value, 5))
+            
+            logger.info(f"启发式选择: k={k_value}, 设计规模={design_size}, 复杂度={query_complexity:.3f}")
+            
+            return {
+                "k_value": k_value,
+                "confidence": 0.8,  # 启发式方法置信度较高
+                "exploration_type": "exploit",
+                "method": "heuristic"
+            }
+            
+        except Exception as e:
+            logger.error(f"启发式动作选择失败: {str(e)}")
+            return {
+                "k_value": 3,  # 默认k值
+                "confidence": 0.5,
+                "exploration_type": "exploit",
+                "method": "default"
+            }
+    
+    def _explore_k_value(self, available_actions: List[int] = None) -> int:
+        """探索k值"""
+        if available_actions:
+            return random.choice(available_actions)
+        else:
+            # 随机选择1-5之间的k值
+            return random.randint(1, 5)
+    
+    def _decide_exploration_type(self, confidence: float) -> str:
+        """决定探索类型"""
+        # 基于置信度和探索率决定
+        if confidence < 0.6 or random.random() < self.epsilon: # Changed from exploration_rate to epsilon
+            return "explore"
+        else:
+            return "exploit"
     
     def update(self, state: State, action: Action, reward: float, next_state: State):
         """更新Q值
@@ -209,6 +305,78 @@ class QLearningAgent:
         
         self.logger.debug(f"Q值更新: 状态={state_key}, 动作={action.k_value}, "
                          f"旧Q值={current_q:.3f}, 新Q值={new_q:.3f}")
+    
+    def update_q_value(self, state: State, action: int, reward: float, next_state: State = None):
+        """更新Q值（改进版）"""
+        try:
+            state_hash = self._hash_state(state)
+            
+            # 初始化状态Q值
+            if state_hash not in self.q_table:
+                self.q_table[state_hash] = {}
+            
+            # 获取当前Q值
+            current_q = self.q_table[state_hash].get(action, 0.0)
+            
+            # 计算目标Q值
+            if next_state:
+                next_state_hash = self._hash_state(next_state)
+                next_max_q = max(self.q_table.get(next_state_hash, {}).values(), default=0.0)
+                target_q = reward + self.gamma * next_max_q
+            else:
+                target_q = reward
+            
+            # 更新Q值
+            new_q = current_q + self.alpha * (target_q - current_q)
+            self.q_table[state_hash][action] = new_q
+            
+            logger.debug(f"更新Q值: 状态={state_hash}, 动作={action}, 奖励={reward:.3f}, Q值={current_q:.3f}->{new_q:.3f}")
+            
+            # 保存Q表
+            self._save_q_table()
+            
+        except Exception as e:
+            logger.error(f"更新Q值失败: {str(e)}")
+    
+    def _save_q_table(self):
+        """保存Q表"""
+        try:
+            q_table_file = Path("data/rl_training/q_table.json")
+            q_table_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            # 转换Q表为可序列化格式
+            serializable_q_table = {}
+            for state_hash, actions in self.q_table.items():
+                serializable_q_table[state_hash] = {str(k): float(v) for k, v in actions.items()}
+            
+            with open(q_table_file, 'w') as f:
+                json.dump(serializable_q_table, f, indent=2)
+            
+            logger.info(f"Q表已保存到: {q_table_file}")
+            
+        except Exception as e:
+            logger.error(f"保存Q表失败: {str(e)}")
+    
+    def load_q_table(self):
+        """加载Q表"""
+        try:
+            q_table_file = Path("data/rl_training/q_table.json")
+            if q_table_file.exists():
+                with open(q_table_file, 'r') as f:
+                    serializable_q_table = json.load(f)
+                
+                # 转换回原始格式
+                self.q_table = {}
+                for state_hash, actions in serializable_q_table.items():
+                    self.q_table[state_hash] = {int(k): float(v) for k, v in actions.items()}
+                
+                logger.info(f"Q表已加载，包含 {len(self.q_table)} 个状态")
+            else:
+                logger.info("Q表文件不存在，将创建新的Q表")
+                
+        except Exception as e:
+            logger.error(f"加载Q表失败: {str(e)}")
+            self.q_table = {}
     
     def add_experience(self, experience: Experience):
         """添加经验到回放缓冲区

@@ -528,6 +528,9 @@ class UnifiedPaperExperiment:
         # 保存结果
         self._save_all_results(hpwl_results, training_records, inference_results, ablation_results, report)
         
+        # 运行RL训练周期
+        self._run_rl_training_cycle(hpwl_results)
+        
         logger.info("=== 统一版论文HPWL对比实验完成 ===")
 
         # === 自动输出HPWL对比JSON报告（含参数与检索轨迹） ===
@@ -1793,23 +1796,36 @@ RL智能体选择的动作：
             if llm_response and isinstance(llm_response, str):
                 # 尝试提取JSON - 增强的解析逻辑
                 import re
-                json_match = re.search(r'\{.*\}', llm_response, re.DOTALL)
-                if json_match:
-                    try:
-                        llm_strategy = json.loads(json_match.group())
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"JSON解析失败，尝试修复格式: {e}")
-                        # 尝试修复常见的JSON格式问题
-                        fixed_json = json_match.group()
-                        # 修复缺少双引号的属性名
-                        fixed_json = re.sub(r'(\w+):', r'"\1":', fixed_json)
-                        # 修复单引号
-                        fixed_json = fixed_json.replace("'", '"')
+                
+                # 首先尝试直接解析整个响应
+                try:
+                    llm_strategy = json.loads(llm_response)
+                except json.JSONDecodeError:
+                    # 尝试提取JSON块
+                    json_match = re.search(r'\{.*\}', llm_response, re.DOTALL)
+                    if json_match:
                         try:
-                            llm_strategy = json.loads(fixed_json)
-                        except json.JSONDecodeError:
-                            logger.warning("JSON修复失败，使用基础策略")
-                            llm_strategy = {}
+                            llm_strategy = json.loads(json_match.group())
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"JSON解析失败，尝试修复格式: {e}")
+                            # 尝试修复常见的JSON格式问题
+                            fixed_json = json_match.group()
+                            # 修复缺少双引号的属性名
+                            fixed_json = re.sub(r'(\w+):', r'"\1":', fixed_json)
+                            # 修复单引号
+                            fixed_json = fixed_json.replace("'", '"')
+                            # 修复注释
+                            fixed_json = re.sub(r'//.*$', '', fixed_json, flags=re.MULTILINE)
+                            # 修复尾随逗号
+                            fixed_json = re.sub(r',(\s*[}\]])', r'\1', fixed_json)
+                            try:
+                                llm_strategy = json.loads(fixed_json)
+                            except json.JSONDecodeError:
+                                logger.warning("JSON修复失败，使用基础策略")
+                                llm_strategy = {}
+                    else:
+                        logger.warning("未找到JSON格式，使用基础策略")
+                        llm_strategy = {}
                     
                     # 验证和调整LLM输出
                     strategy_params = {
@@ -3826,6 +3842,215 @@ exit
         except Exception as e:
             logger.error(f"生成OpenROAD HPWL报告失败: {e}")
             return None
+    
+    def _run_rl_training_cycle(self, experiment_results: List[Dict[str, Any]]):
+        """运行RL训练周期
+        
+        Args:
+            experiment_results: 实验结果数据
+        """
+        logger.info("开始RL智能体训练周期...")
+        
+        try:
+            # 从实验结果提取训练数据
+            training_data = []
+            for result in experiment_results:
+                # 提取布局策略生成数据
+                if 'layout_strategy' in result:
+                    strategy_data = {
+                        'design_info': result.get('design_info', {}),
+                        'query_info': result.get('query_info', {}),
+                        'result_info': result.get('retrieval_result', {}),
+                        'quality_score': result.get('quality_score', 0.5),
+                        'k_value': result.get('k_value', 3),
+                        'exploration_type': result.get('exploration_type', 'exploit'),
+                        'performance_improvement': result.get('performance_improvement', 0.0),
+                        'iteration': result.get('iteration', 1),
+                        'stage': result.get('stage', 'initial'),
+                        'historical_performance': result.get('historical_performance', 0.5),
+                        'success_rate': result.get('success_rate', 0.5),
+                        'query_complexity': result.get('query_complexity', 0.5)
+                    }
+                    training_data.append(strategy_data)
+                
+                # 提取HPWL对比数据
+                if 'hpwl_comparison' in result:
+                    hpwl_data = result['hpwl_comparison']
+                    if 'improvement_rate' in hpwl_data:
+                        hpwl_training_data = {
+                            'design_info': result.get('design_info', {}),
+                            'query_info': {'type': 'hpwl_optimization'},
+                            'result_info': {'initial_relevance': 0.5},
+                            'quality_score': hpwl_data.get('improvement_rate', 0.0),
+                            'k_value': result.get('k_value', 3),
+                            'exploration_type': result.get('exploration_type', 'exploit'),
+                            'performance_improvement': hpwl_data.get('improvement_rate', 0.0),
+                            'iteration': result.get('iteration', 1),
+                            'stage': 'final',
+                            'historical_performance': result.get('historical_performance', 0.5),
+                            'success_rate': 1.0 if hpwl_data.get('improvement_rate', 0) > 0 else 0.0,
+                            'query_complexity': 0.7  # HPWL优化通常复杂度较高
+                        }
+                        training_data.append(hpwl_training_data)
+            
+            if training_data:
+                # 在线训练RL智能体
+                self._train_rl_agent_online(training_data)
+                logger.info(f"RL智能体训练完成，处理了 {len(training_data)} 个训练样本")
+            else:
+                logger.warning("没有找到有效的训练数据")
+                
+        except Exception as e:
+            logger.error(f"RL训练周期失败: {str(e)}")
+    
+    def _train_rl_agent_online(self, training_data: List[Dict[str, Any]]):
+        """在线训练RL智能体
+        
+        Args:
+            training_data: 训练数据
+        """
+        try:
+            for data in training_data:
+                # 构建状态
+                state = self._build_rl_state(data)
+                
+                # 选择动作
+                action_dict = self.rl_agent.select_action(state)
+                action = Action(
+                    k_value=action_dict['k_value'],
+                    confidence=action_dict['confidence'],
+                    exploration_type=action_dict['exploration_type']
+                )
+                
+                # 计算奖励
+                reward = self._calculate_rl_reward(data)
+                
+                # 构建下一个状态
+                next_state = self._build_next_rl_state(state, action, data)
+                
+                # 更新Q值
+                self.rl_agent.update_q_value(state, action.k_value, reward, next_state)
+                
+                # 添加到经验回放
+                experience = Experience(
+                    state=state,
+                    action=action,
+                    reward=reward,
+                    next_state=next_state,
+                    timestamp='2025-07-11'
+                )
+                self.rl_agent.add_experience(experience)
+            
+            # 批量更新
+            self.rl_agent.batch_update(batch_size=min(32, len(training_data)))
+            
+            # 保存Q表
+            self.rl_agent._save_q_table()
+            
+            logger.info("RL智能体在线训练完成")
+            
+        except Exception as e:
+            logger.error(f"RL智能体在线训练失败: {str(e)}")
+    
+    def _build_rl_state(self, data: Dict[str, Any]) -> State:
+        """构建RL状态"""
+        design_info = data.get('design_info', {})
+        query_info = data.get('query_info', {})
+        result_info = data.get('result_info', {})
+        
+        return State(
+            # 查询复杂度特征
+            query_complexity=data.get('query_complexity', 0.5),
+            query_length=len(str(query_info)),
+            query_type=query_info.get('type', 'general'),
+            
+            # 设计特征
+            design_type=design_info.get('design_type', 'unknown'),
+            design_size=design_info.get('num_components', 0),
+            design_area=design_info.get('area', 0.0),
+            constraint_count=len(design_info.get('constraints', [])),
+            constraint_types=list(set([c.get('type', 'unknown') for c in design_info.get('constraints', [])])),
+            
+            # 检索特征
+            initial_relevance=result_info.get('initial_relevance', 0.5),
+            result_diversity=result_info.get('diversity', 0.5),
+            knowledge_coverage=result_info.get('coverage', 0.5),
+            entity_count=result_info.get('entity_count', 0),
+            
+            # 性能特征
+            historical_performance=data.get('historical_performance', 0.5),
+            recent_success_rate=data.get('success_rate', 0.5),
+            average_quality_score=data.get('quality_score', 0.5),
+            
+            # 上下文特征
+            current_iteration=data.get('iteration', 1),
+            optimization_stage=data.get('stage', 'initial'),
+            
+            # 时间戳
+            timestamp='2025-07-11'
+        )
+    
+    def _build_next_rl_state(self, current_state: State, action: Action, data: Dict[str, Any]) -> State:
+        """构建下一个RL状态"""
+        return State(
+            # 查询复杂度特征（保持不变）
+            query_complexity=current_state.query_complexity,
+            query_length=current_state.query_length,
+            query_type=current_state.query_type,
+            
+            # 设计特征（保持不变）
+            design_type=current_state.design_type,
+            design_size=current_state.design_size,
+            design_area=current_state.design_area,
+            constraint_count=current_state.constraint_count,
+            constraint_types=current_state.constraint_types,
+            
+            # 检索特征（基于动作结果更新）
+            initial_relevance=data.get('next_relevance', current_state.initial_relevance),
+            result_diversity=data.get('next_diversity', current_state.result_diversity),
+            knowledge_coverage=data.get('next_coverage', current_state.knowledge_coverage),
+            entity_count=data.get('next_entity_count', current_state.entity_count),
+            
+            # 性能特征（基于奖励更新）
+            historical_performance=data.get('next_performance', current_state.historical_performance),
+            recent_success_rate=data.get('next_success_rate', current_state.recent_success_rate),
+            average_quality_score=data.get('next_quality_score', current_state.average_quality_score),
+            
+            # 上下文特征（迭代更新）
+            current_iteration=current_state.current_iteration + 1,
+            optimization_stage=self._determine_next_rl_stage(current_state.optimization_stage, action),
+            
+            # 时间戳
+            timestamp='2025-07-11'
+        )
+    
+    def _determine_next_rl_stage(self, current_stage: str, action: Action) -> str:
+        """确定下一个RL优化阶段"""
+        if current_stage == 'initial':
+            return 'refinement' if action.k_value > 3 else 'initial'
+        elif current_stage == 'refinement':
+            return 'final' if action.confidence > 0.8 else 'refinement'
+        else:
+            return 'final'
+    
+    def _calculate_rl_reward(self, data: Dict[str, Any]) -> float:
+        """计算RL奖励"""
+        # 基础奖励
+        base_reward = data.get('quality_score', 0.5)
+        
+        # 性能奖励
+        performance_bonus = data.get('performance_improvement', 0.0)
+        
+        # 效率奖励（k值越小，效率越高）
+        k_value = data.get('k_value', 3)
+        efficiency_bonus = max(0, (5 - k_value) / 5) * 0.2
+        
+        # 探索奖励（鼓励探索新策略）
+        exploration_bonus = 0.1 if data.get('exploration_type') == 'explore' else 0.0
+        
+        total_reward = base_reward + performance_bonus + efficiency_bonus + exploration_bonus
+        
+        return min(1.0, max(0.0, total_reward))
 
 
 class PerformanceMonitor:
