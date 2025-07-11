@@ -182,6 +182,10 @@ class SimpleExperiment:
                     training_results['episodes'].append(episode_data)
                     
                     logger.info(f"    动作: k={action.get('k_value', 5)}, 奖励: {reward:.3f}")
+            
+            except Exception as e:
+                logger.error(f"训练设计 {design_name} 失败: {e}")
+                continue
         
         # 保存Q表统计
         training_results['q_table_stats'] = self.rl_agent.get_q_table_stats()
